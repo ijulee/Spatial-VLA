@@ -1,0 +1,301 @@
+target C {
+    platform: {
+        name: "rp2040",
+        board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Encoders from "lib/Encoders.lf"
+import GyroAngle from "lib/IMU.lf"
+
+preamble {=
+    #include <hardware/gpio.h>
+    #include <pico/stdlib.h>
+=}
+
+reactor EncoderDist {
+    input angle_left: int32_t
+    input angle_right: int32_t
+
+    output left: float
+    output right: float
+
+    preamble {=
+      #def PI   3.14159
+      #def DIA  3.175
+    =}
+    
+    reaction(angle_left, angle_right) -> left, right {=
+      lf_set(left, (angle_left->value/360.0f) * PI * DIA);
+      lf_set(right, (angle_right->value/360.0f) * PI * DIA);
+    =}
+  }
+
+reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
+    input command: string
+
+    state lastCommand: string
+    state startAngle: float
+    state startDistL: float
+    state startDistR: float
+
+    output notify0: string
+    output notify1: string
+    output notify2: string
+    output notify3: string
+
+    motor = new MotorsWithFeedback();
+    encoder = new Encoders();
+    dist = new EncoderDist();
+    gyro = new GyroAngle();
+
+    // sensor polling timer
+    timer sampling(0, sample_period);
+    timer get_command(200 ms);
+
+    // encoder to distance
+    encoder.left -> dist.angle_left;
+    encoder.right -> dist.angle_right;
+
+    // encoder to motor feedback
+    encoder.left -> motor.left;
+    encoder.right -> motor.right;
+
+    reaction (startup) {=
+      self->startAngle = 0.0f;
+      self->startDistL = 0.0f;
+      self->startDistR = 0.0f;
+    =}
+
+    reaction (sampling) -> encoder.trigger, gyro.trigger/*, accel.trigger*/ {=
+        // update distance
+        lf_set(encoder.trigger, true);
+
+        // update angle
+        lf_set(gyro.trigger, true);
+    =}
+
+    initial mode WAIT {
+        // wait to receive a command
+        timer timeout(10 ms) 
+
+        reaction (command, timeout) -> 
+            notify0, motor.left_speed, motor.right_speed,
+            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(WAIT) {=
+        
+        string next_command;
+
+        if(command->is_present) {
+            next_command = command->value;
+        } else { // timed out, continue last command
+            next_command = self->lastCommand;
+        }
+
+        self->lastCommand = next_command;
+        char buf[17];
+        sprintf(buf, "cmd: %s", next_command);
+        lf_set(notify0,  next_command);
+
+        switch (next_command[0]) {
+            case 'f':
+            lf_set(motor.left_speed, 0.1f);
+            lf_set(motor.right_speed, 0.1f);
+            lf_set_mode(FORWARD);
+            break;
+            
+            case 'b':
+            lf_set(motor.left_speed, -0.1f);
+            lf_set(motor.right_speed, -0.1f);
+            lf_set_mode(BACK);
+            break;
+            
+            case 'l':
+            lf_set(motor.left_speed, -0.05f);
+            lf_set(motor.right_speed, 0.05f);
+            lf_set_mode(LEFT);
+            break;
+
+            case 'r':
+            lf_set(motor.left_speed, 0.05f);
+            lf_set(motor.right_speed, -0.05f);
+            lf_set_mode(RIGHT);
+            break;
+
+            case 's':
+            lf_set(motor.left_speed, 0.0f);
+            lf_set(motor.right_speed, 0.0f);
+            lf_set_mode(WAIT);
+            break;
+
+            default:
+            return;
+        }
+
+        =}
+
+        reaction(gyro.z, dist.left, dist.right) {=
+        
+        self->startAngle = gyro.z->value;
+        self->startDistL = dist.left->value;
+        self->startDistR = dist.right->value;
+        
+        =}
+    }
+
+    mode FORWARD {
+
+        reaction(gyro.z) -> notify3, motor.left_speed, motor.right_speed {=
+        
+        float angleTurned = gyro.z->value - self->startAngle;
+        char buf[17];
+        sprintf(buf, "%3.2f", angleTurned);
+        lf_set(notify3, buf);
+        lf_set(motor.left_speed, 0.1 * (1 - (angleTurned / 20)));
+        lf_set(motor.right_speed, 0.1 * (1 + (angleTurned / 20)));
+
+        =}
+
+        reaction(dist.left, dist.right) -> notify1, notify2 {=
+
+        float distMovedL = dist.left->value - self->startDistL;
+        float distMovedR = dist.right->value - self->startDistR;
+        char buf1[17], buf2[17];
+        sprintf(buf1, "%3.2f", distMovedL);
+        sprintf(buf2, "%3.2f", distMovedR);
+        lf_set(notify1, buf1);
+        lf_set(notify2, buf2);
+
+        =}
+
+        reaction(get_command) -> reset(WAIT) {=
+
+        lf_set_mode(WAIT);
+
+        =}
+    }
+
+    mode BACK {
+
+        reaction(gyro.z) -> notify3, motor.left_speed, motor.right_speed {=
+        
+        float angleTurned = gyro.z->value - self->startAngle;
+        char buf[17];
+        sprintf(buf, "%3.2f", angleTurned);
+        lf_set(notify3, buf);
+        lf_set(motor.left_speed, -0.1 * (1 + (angleTurned / 20)));
+        lf_set(motor.right_speed, -0.1 * (1 - (angleTurned / 20)));
+
+        =}
+
+        reaction(dist.left, dist.right) -> notify1, notify2 {=
+
+        float distMovedL = dist.left->value - self->startDistL;
+        float distMovedR = dist.right->value - self->startDistR;
+        char buf1[17], buf2[17];
+        sprintf(buf1, "%3.2f", distMovedL);
+        sprintf(buf2, "%3.2f", distMovedR);
+        lf_set(notify1, buf1);
+        lf_set(notify2, buf2);
+
+        =}
+
+        reaction(get_command) -> reset(WAIT) {=
+
+        lf_set_mode(WAIT);
+
+        =}
+    }
+
+    mode LEFT {
+
+        reaction(gyro.z) -> notify3 {=
+        
+        float angleTurned = gyro.z->value - self->startAngle;
+        char buf[17];
+        sprintf(buf, "%3.2f", angleTurned);
+        lf_set(notify3, buf);
+
+        =}
+
+        reaction(dist.left, dist.right) -> 
+            notify1, notify2, motor.left_speed, motor.right_speed {=
+        
+        float distMovedL = dist.left->value - self->startDistL;
+        float distMovedR = dist.right->value - self->startDistR;
+        char buf1[17], buf2[17];
+        sprintf(buf1, "%3.2f", distMovedL);
+        sprintf(buf2, "%3.2f", distMovedR);
+        lf_set(notify1, buf1);
+        lf_set(notify2, buf2);
+
+        lf_set(motor.left_speed, -0.1 * (1 + ((distMovedR+distMovedL) / 20)));
+        lf_set(motor.right_speed, 0.1 * (1 - ((distMovedR+distMovedL) / 20)));
+
+        =}
+
+        reaction(get_command) -> reset(WAIT) {=
+
+        lf_set_mode(WAIT);
+
+        =}
+    }
+
+    mode RIGHT {
+
+        reaction(gyro.z) -> notify3 {=
+        
+        float angleTurned = gyro.z->value - self->startAngle;
+        char buf[17];
+        sprintf(buf, "%3.2f", angleTurned);
+        lf_set(notify3, buf);
+
+        =}
+
+        reaction(dist.left, dist.right) -> 
+            notify1, notify2, motor.left_speed, motor.right_speed {=
+        
+        float distMovedL = dist.left->value - self->startDistL;
+        float distMovedR = dist.right->value - self->startDistR;
+        char buf1[17], buf2[17];
+        sprintf(buf1, "%3.2f", distMovedL);
+        sprintf(buf2, "%3.2f", distMovedR);
+        lf_set(notify1, buf1);
+        lf_set(notify2, buf2);
+        
+        lf_set(motor.left_speed, 0.1 * (1 + ((distMovedR+distMovedL) / 20)));
+        lf_set(motor.right_speed, -0.1 * (1 - ((distMovedR+distMovedL) / 20)));
+
+        =}
+
+        reaction(get_command) -> reset(WAIT) {=
+
+        lf_set_mode(WAIT);
+
+        =}
+    }
+}
+
+reactor BTReceiver {
+    input enable: bool
+    output command: string
+}
+
+main reactor {
+    robot = new Robot()
+    display = new Display()
+    rcvr = new BTReceiver()
+
+    robot.notify0 -> display.line0
+    robot.notify1 -> display.line1
+    robot.notify2 -> display.line2
+    robot.notify3 -> display.line3
+
+    rcvr.command -> robot.command
+
+    reaction (startup) -> rcvr.enable {=
+        lf_set(rcvr.enable, true);
+    =}
+}
