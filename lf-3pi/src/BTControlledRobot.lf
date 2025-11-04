@@ -34,10 +34,10 @@ reactor EncoderDist {
     =}
   }
 
-reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
+reactor Robot(sample_period: time = 100 ms) {
     input command: string
 
-    state lastCommand: string
+    state lastCommand: string = "s";
     state startAngle: float
     state startDistL: float
     state startDistR: float
@@ -64,10 +64,11 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
     encoder.left -> motor.left;
     encoder.right -> motor.right;
 
-    reaction (startup) {=
+    reaction (startup) -> notify0 {=
       self->startAngle = 0.0f;
       self->startDistL = 0.0f;
       self->startDistR = 0.0f;
+      lf_set(notify0, "started");
     =}
 
     reaction (sampling) -> encoder.trigger, gyro.trigger/*, accel.trigger*/ {=
@@ -88,7 +89,7 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
         // wait to receive a command
         timer timeout(50 ms) 
 
-        reaction (command, timeout) -> 
+        reaction (command) -> 
             notify0, motor.left_speed, motor.right_speed,
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(WAIT) {=
         
@@ -101,9 +102,7 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
         }
 
         self->lastCommand = next_command;
-        char buf[17];
-        sprintf(buf, "cmd: %s", buf);
-        lf_set(notify0, buf);
+        lf_set(notify0, next_command);
 
         switch (next_command[0]) {
             case 'f':
@@ -156,9 +155,12 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
         reaction(gyro.z) -> notify3, motor.left_speed, motor.right_speed {=
         
         float angleTurned = gyro.z->value - self->startAngle;
-        char buf[17];
-        sprintf(buf, "%3.2f", angleTurned);
+        char buf[6];
+        sprintf(buf, 6, "%3.2f", angleTurned);
         lf_set(notify3, buf);
+        float factor = 1.0f / (1 + exp(-angleTurned));
+        float newLeft = 0.1 * (1 - (factor / 20));
+        float newRight = 0.1 * (1 + (factor / 20));
         lf_set(motor.left_speed, 0.1 * (1 - (angleTurned / 20)));
         lf_set(motor.right_speed, 0.1 * (1 + (angleTurned / 20)));
 
@@ -295,15 +297,15 @@ reactor BTReceiver {
     reaction(t) -> command {=
         switch (self->count) {
             case 0:
-            lf_set(command, "f 10");
+            lf_set(command, "f 10\n");
             break;
 
             case 15:
-            lf_set(command, "b 20");
+            //lf_set(command, "b 20\n");
             break;
 
             case 25:
-            lf_set(command, "r 5");
+            //lf_set(command, "r 5\n");
             break;
         }
         self->count++;
@@ -318,8 +320,8 @@ main reactor {
     robot.notify0 -> display.line0
     robot.notify1 -> display.line1
     robot.notify2 -> display.line2
-    rcvr.command -> display.line3
-    // robot.notify3 -> display.line3
+    //rcvr.command -> display.line3
+    robot.notify3 -> display.line3
 
     rcvr.command -> robot.command
 }
