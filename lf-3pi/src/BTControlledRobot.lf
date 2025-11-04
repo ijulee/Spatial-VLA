@@ -24,8 +24,8 @@ reactor EncoderDist {
     output right: float
 
     preamble {=
-      #def PI   3.14159
-      #def DIA  3.175
+      #define PI   3.14159
+      #define DIA  3.175
     =}
     
     reaction(angle_left, angle_right) -> left, right {=
@@ -78,9 +78,15 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
         lf_set(gyro.trigger, true);
     =}
 
+    // reaction (command) -> notify0 {=
+    //     char buf[17];
+    //     sprintf(buf, "cmd: %s", command->value);
+    //     lf_set(notify0, buf);
+    // =}
+
     initial mode WAIT {
         // wait to receive a command
-        timer timeout(10 ms) 
+        timer timeout(50 ms) 
 
         reaction (command, timeout) -> 
             notify0, motor.left_speed, motor.right_speed,
@@ -96,8 +102,8 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
 
         self->lastCommand = next_command;
         char buf[17];
-        sprintf(buf, "cmd: %s", next_command);
-        lf_set(notify0,  next_command);
+        sprintf(buf, "cmd: %s", buf);
+        lf_set(notify0, buf);
 
         switch (next_command[0]) {
             case 'f':
@@ -279,8 +285,29 @@ reactor Robot(calibration_time: time = 10 s, sample_period: time = 50 ms) {
 }
 
 reactor BTReceiver {
-    input enable: bool
+    //input enable: bool
     output command: string
+    
+    state count: int = 0
+
+    timer t(0, 200ms)
+
+    reaction(t) -> command {=
+        switch (self->count) {
+            case 0:
+            lf_set(command, "f 10");
+            break;
+
+            case 15:
+            lf_set(command, "b 20");
+            break;
+
+            case 25:
+            lf_set(command, "r 5");
+            break;
+        }
+        self->count++;
+    =}
 }
 
 main reactor {
@@ -291,11 +318,8 @@ main reactor {
     robot.notify0 -> display.line0
     robot.notify1 -> display.line1
     robot.notify2 -> display.line2
-    robot.notify3 -> display.line3
+    rcvr.command -> display.line3
+    // robot.notify3 -> display.line3
 
     rcvr.command -> robot.command
-
-    reaction (startup) -> rcvr.enable {=
-        lf_set(rcvr.enable, true);
-    =}
 }
