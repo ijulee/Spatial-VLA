@@ -14,11 +14,12 @@ import GyroAngle from "lib/IMU.lf"
 preamble {=
     #include <hardware/gpio.h>
     #include <pico/stdlib.h>
+    #include <string.h>
 
     #define SIGMOID(x) (1.0f/(1+exp(-x))-0.5f)
     #define GATE(a, x, b) (fmin(b, fmax(a, x)))
-    #define MOVE_SPEED 0.05f
-    #define TURN_SPEED 0.01f
+    #define MOVE_SPEED 0.2f
+    #define TURN_SPEED 0.1f
 =}
 
 reactor EncoderDist {
@@ -42,7 +43,7 @@ reactor EncoderDist {
 reactor Robot(sample_period: time = 100 ms) {
     input command: string
 
-    state lastCommand: string = "s";
+    state nextCommand: string = "";
     state startAngle: float
     state startDistL: float
     state startDistR: float
@@ -58,8 +59,8 @@ reactor Robot(sample_period: time = 100 ms) {
     gyro = new GyroAngle();
 
     // sensor polling timer
-    timer sampling(0, 100 ms);
-    timer get_command(200 ms);
+    timer sampling(0, sample_period);
+    timer get_command(0, 200 ms);
 
     // encoder to distance
     encoder.left -> dist.angle_left;
@@ -76,7 +77,7 @@ reactor Robot(sample_period: time = 100 ms) {
       lf_set(notify0, "started");
     =}
 
-    reaction (sampling) -> encoder.trigger, gyro.trigger/*, accel.trigger*/ {=
+    reaction (sampling) -> encoder.trigger, gyro.trigger {=
         // update distance
         lf_set(encoder.trigger, true);
 
@@ -84,69 +85,58 @@ reactor Robot(sample_period: time = 100 ms) {
         lf_set(gyro.trigger, true);
     =}
 
-    initial mode WAIT {
-        // wait to receive a command
-        timer timeout(50 ms) 
+    reaction (command) -> notify0 {=
+        self->nextCommand = command->value;
+        static char buf[17];
+        sprintf(buf, 17, self->nextCommand);
+        lf_set(notify0, buf);
+    =}
 
-        reaction (command) -> 
-            notify0, motor.left_speed, motor.right_speed,
-            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(WAIT) {=
-        
-        string next_command;
-
-        if(command->is_present) {
-            next_command = command->value;
-        } else { // timed out, continue last command
-            next_command = self->lastCommand;
-        }
-
-        self->lastCommand = next_command;
-        // static char buf[17];
-        // sprintf(buf, 17, next_command);
-        lf_set(notify0, next_command);
-
-        switch (next_command[0]) {
-            case 'f':
-            lf_set(motor.left_speed, MOVE_SPEED);
-            lf_set(motor.right_speed, MOVE_SPEED);
-            lf_set_mode(FORWARD);
-            break;
+    initial mode STOP {
+        reaction(get_command) ->
+            notify0, /*motor.left_speed, motor.right_speed,*/
+            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
             
-            case 'b':
-            lf_set(motor.left_speed, -MOVE_SPEED);
-            lf_set(motor.right_speed, -MOVE_SPEED);
-            lf_set_mode(BACK);
-            break;
-            
-            case 'l':
-            lf_set(motor.left_speed, -TURN_SPEED);
-            lf_set(motor.right_speed, TURN_SPEED);
-            lf_set_mode(LEFT);
-            break;
+            if (strcmp(self->nextCommand, "") == 0) {
+                return;
+            } 
 
-            case 'r':
-            lf_set(motor.left_speed, TURN_SPEED);
-            lf_set(motor.right_speed, -TURN_SPEED);
-            lf_set_mode(RIGHT);
-            break;
+            // static char buf[17];
+            // sprintf(buf, 17, "%s", self->nextCommand);
+            // lf_set(notify0, buf);
 
-            case 's':
-            lf_set(motor.left_speed, 0.0f);
-            lf_set(motor.right_speed, 0.0f);
-            lf_set_mode(WAIT);
-            break;
+            switch (self->nextCommand[0]) {
+                case 'f':
+                lf_set_mode(FORWARD);
+                break;
+                
+                case 'b':
+                lf_set_mode(BACK);
+                break;
+                
+                case 'l':
+                lf_set_mode(LEFT);
+                break;
 
-            default:
-            return;
-        }
+                case 'r':
+                lf_set_mode(RIGHT);
+                break;
 
+                case 's':
+                lf_set_mode(STOP);
+                break;
+
+                default:
+                return;
+            }
+
+            self->nextCommand = "";
         =}
 
         reaction(gyro.z, dist.left, dist.right) {=
-        
-        self->startAngle = gyro.z->value;
-        self->startDistL = dist.left->value;
-        self->startDistR = dist.right->value;
+            self->startAngle = gyro.z->value;
+            self->startDistL = dist.left->value;
+            self->startDistR = dist.right->value;
         
         =}
     }
@@ -154,16 +144,15 @@ reactor Robot(sample_period: time = 100 ms) {
     mode FORWARD {
 
         reaction(gyro.z) -> notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-            float angleTurned = gyro.z->value - self->startAngle + 10;
-
             /* The change in heading is proportional to the difference in distance traveled
             * between left and right wheel, which is integral of each wheel's speed.
             */
-            float leftSpeed = motor.left_speed->value;
-            float rightSpeed = motor.right_speed->value;
-            float factor = rightSpeed-leftSpeed * 0.001f + angleTurned * 0.02f;
-            float newLeft = MOVE_SPEED + GATE(-2*MOVE_SPEED, leftSpeed + factor, 2*MOVE_SPEED);
-            float newRight = MOVE_SPEED + GATE(-2*MOVE_SPEED, rightSpeed - factor, 2*MOVE_SPEED);
+            float angleTurned = gyro.z->value - self->startAngle;
+            float speedDiff = motor.left_speed->value - motor.right_speed->value;
+
+            float factor = speedDiff * -0.004f + angleTurned * 0.002f;
+            float newLeft = MOVE_SPEED + GATE(-MOVE_SPEED, factor, MOVE_SPEED);
+            float newRight = MOVE_SPEED - GATE(-MOVE_SPEED, factor, MOVE_SPEED);
             lf_set(motor.left_speed, newLeft);
             lf_set(motor.right_speed, newRight);
 
@@ -181,24 +170,32 @@ reactor Robot(sample_period: time = 100 ms) {
             float distMovedR = dist.right->value - self->startDistR;
         =}
 
-        // reaction(get_command) -> reset(WAIT) {=
-            // lf_set_mode(WAIT);
-        // =}
+        reaction(get_command) ->
+            notify0, motor.left_speed, motor.right_speed,
+            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
+
+            if (strcmp(self->nextCommand, "") == 0) {
+                return;
+            } 
+
+            static char buf[17];
+            sprintf(buf, 17, self->nextCommand);
+            lf_set(notify0, buf);
+        =}
     }
 
     mode BACK {
 
         reaction(gyro.z) -> notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-            float angleTurned = gyro.z->value - self->startAngle;
-
             /* The change in heading is proportional to the difference in distance traveled
             * between left and right wheel, which is integral of each wheel's speed.
             */
-            float leftSpeed = motor.left_speed->value;
-            float rightSpeed = motor.right_speed->value;
-            float factor = SIGMOID(leftSpeed-rightSpeed) * -0.001f + SIGMOID(angleTurned) * 0.005f;
-            float newLeft = motor.left_speed->value + factor;
-            float newRight = motor.right_speed->value - factor;
+            float angleTurned = gyro.z->value - self->startAngle;
+            float speedDiff = motor.left_speed->value - motor.right_speed->value;
+
+            float factor = speedDiff * -0.004f + angleTurned * 0.002f;
+            float newLeft = -MOVE_SPEED + GATE(-MOVE_SPEED, factor, MOVE_SPEED);
+            float newRight = -MOVE_SPEED - GATE(-MOVE_SPEED, factor, MOVE_SPEED);
             lf_set(motor.left_speed, newLeft);
             lf_set(motor.right_speed, newRight);
 
@@ -229,17 +226,17 @@ reactor Robot(sample_period: time = 100 ms) {
 
         reaction(dist.left, dist.right) -> 
             notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-        
+            
             float distMovedL = dist.left->value - self->startDistL;
             float distMovedR = dist.right->value - self->startDistR;
-            float factor = SIGMOID(distMovedL-distMovedR) * 0.001;
-            float newLeft = motor.left_speed->value - factor;
-            float newRight = motor.right_speed->value - factor;
+            float factor = (distMovedL+distMovedR) * 0.001;
+            float newLeft = -(TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
+            float newRight = (TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
+
             static char buf1[17], buf2[17], buf3[17];
-            sprintf(buf1, "%3.2f", distMovedL-distMovedR);
+            sprintf(buf1, "%3.2f", distMovedL+distMovedR);
             sprintf(buf2, "%.3f", newLeft);
             sprintf(buf3, "%.3f", newRight);
-
             lf_set(notify1, buf1);
             lf_set(notify2, buf2);
             lf_set(notify3, buf3);
@@ -264,17 +261,17 @@ reactor Robot(sample_period: time = 100 ms) {
 
         reaction(dist.left, dist.right) -> 
             notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
+            
             float distMovedL = dist.left->value - self->startDistL;
             float distMovedR = dist.right->value - self->startDistR;
-            float factor = SIGMOID(distMovedL-distMovedR) * 0.001;
-            float newLeft = motor.left_speed->value - factor;
-            float newRight = motor.right_speed->value - factor;
+            float factor = (distMovedL+distMovedR) * 0.001;
+            float newLeft = (TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
+            float newRight = -(TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
 
             static char buf1[17], buf2[17], buf3[17];
-            sprintf(buf1, "%3.2f", distMovedL-distMovedR);
+            sprintf(buf1, "%3.2f", distMovedL+distMovedR);
             sprintf(buf2, "%.3f", newLeft);
             sprintf(buf3, "%.3f", newRight);
-
             lf_set(notify1, buf1);
             lf_set(notify2, buf2);
             lf_set(notify3, buf3);
@@ -298,20 +295,20 @@ reactor BTReceiver {
     
     state count: int = 0
 
-    timer t(0, 200ms)
+    timer t(0, 100ms)
 
     reaction(t) -> command {=
         switch (self->count) {
             case 0:
-            lf_set(command, "f 10\n");
+            lf_set(command, "f 10");
             break;
 
             case 15:
-            //lf_set(command, "b 20\n");
+            lf_set(command, "b 20");
             break;
 
             case 25:
-            //lf_set(command, "r 5\n");
+            lf_set(command, "r 5");
             break;
         }
         self->count++;
@@ -323,11 +320,12 @@ main reactor {
     display = new Display()
     rcvr = new BTReceiver()
 
+    rcvr.command -> robot.command
+
     robot.notify0 -> display.line0
     robot.notify1 -> display.line1
     robot.notify2 -> display.line2
-    //rcvr.command -> display.line3
     robot.notify3 -> display.line3
 
-    rcvr.command -> robot.command
+    // rcvr.command -> display.line3
 }
