@@ -19,8 +19,8 @@ preamble {=
 
     #define SIGMOID(x) (1.0f/(1+exp(-x))-0.5f)
     #define GATE(a, x, b) (fmin(b, fmax(a, x)))
-    #define MOVE_SPEED 0.02f
-    #define TURN_SPEED 0.01f
+    #define MOVE_SPEED 0.04f
+    #define TURN_SPEED 0.02f
 =}
 
 reactor EncoderDist {
@@ -91,7 +91,7 @@ reactor Robot(sample_period: time = 100 ms) {
     =}
 
     initial mode STOP {
-        reaction(get_command) ->
+        reaction(get_command, gyro.z, dist.left, dist.right) ->
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
             
             if (strcmp(self->nextCommand, "") == 0) {
@@ -128,12 +128,13 @@ reactor Robot(sample_period: time = 100 ms) {
             string cmdParameter = (self->nextCommand+1);
             char* endptr;
             long num = strtol(cmdParameter, &endptr, 10);
-            if (endptr == '\0')
-                self->speedMulti = (int) num;
-            else 
-                self->speedMulti = 1;
+            self->speedMulti = (int) num;
 
             printf("multiplier: %d\n", self->speedMulti);
+
+            self->startAngle = gyro.z->value;
+            self->startDistL = dist.left->value;
+            self->startDistR = dist.right->value;
 
             self->nextCommand = "";
         =}
@@ -155,7 +156,7 @@ reactor Robot(sample_period: time = 100 ms) {
             float angleTurned = gyro.z->value - self->startAngle;
             float speedDiff = motor.left_speed->value - motor.right_speed->value;
 
-            float factor = speedDiff * -0.004f + angleTurned * 0.002f;
+            float factor = speedDiff * -0.002f + angleTurned * 0.001f;
             float newLeft = MOVE_SPEED + GATE(-MOVE_SPEED, factor, MOVE_SPEED);
             float newRight = MOVE_SPEED - GATE(-MOVE_SPEED, factor, MOVE_SPEED);
             lf_set(motor.left_speed, newLeft*self->speedMulti);
@@ -175,7 +176,7 @@ reactor Robot(sample_period: time = 100 ms) {
             float distMovedR = dist.right->value - self->startDistR;
         =}
 
-        reaction(get_command) ->
+        reaction(get_command, gyro.z, dist.left, dist.right) ->
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
 
             if (strcmp(self->nextCommand, "") == 0) {
@@ -212,11 +213,13 @@ reactor Robot(sample_period: time = 100 ms) {
             string cmdParameter = (self->nextCommand+1);
             char* endptr;
             long num = strtol(cmdParameter, &endptr, 10);
-            if (endptr == '\0')
-                self->speedMulti = (int) num;
-            else 
-                self->speedMulti = 1;
 
+            self->speedMulti = (int) num;
+            
+            self->startAngle = gyro.z->value;
+            self->startDistL = dist.left->value;
+            self->startDistR = dist.right->value;
+            
             printf("multiplier: %d\n", self->speedMulti);
 
             self->nextCommand = "";
@@ -232,7 +235,7 @@ reactor Robot(sample_period: time = 100 ms) {
             float angleTurned = gyro.z->value - self->startAngle;
             float speedDiff = motor.left_speed->value - motor.right_speed->value;
 
-            float factor = speedDiff * -0.004f + angleTurned * 0.002f;
+            float factor = speedDiff * -0.002f + angleTurned * 0.001f;
             float newLeft = -MOVE_SPEED + GATE(-MOVE_SPEED, factor, MOVE_SPEED);
             float newRight = -MOVE_SPEED - GATE(-MOVE_SPEED, factor, MOVE_SPEED);
             lf_set(motor.left_speed, newLeft*self->speedMulti);
@@ -252,7 +255,7 @@ reactor Robot(sample_period: time = 100 ms) {
             float distMovedR = dist.right->value - self->startDistR;
         =}
 
-        reaction(get_command) ->
+        reaction(get_command, gyro.z, dist.left, dist.right) ->
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
             
             if (strcmp(self->nextCommand, "") == 0) {
@@ -289,10 +292,12 @@ reactor Robot(sample_period: time = 100 ms) {
             string cmdParameter = (self->nextCommand+1);
             char* endptr;
             long num = strtol(cmdParameter, &endptr, 10);
-            if (endptr == '\0')
-                self->speedMulti = (int) num;
-            else 
-                self->speedMulti = 1;
+            
+            self->speedMulti = (int) num;
+            
+            self->startAngle = gyro.z->value;
+            self->startDistL = dist.left->value;
+            self->startDistR = dist.right->value;
 
             printf("multiplier: %d\n", self->speedMulti);
 
@@ -311,7 +316,7 @@ reactor Robot(sample_period: time = 100 ms) {
             
             float distMovedL = dist.left->value - self->startDistL;
             float distMovedR = dist.right->value - self->startDistR;
-            float factor = (distMovedL+distMovedR) * 0.001;
+            float factor = (distMovedL+distMovedR) * 0.0005f;
             float newLeft = -(TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
             float newRight = (TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
 
@@ -319,9 +324,9 @@ reactor Robot(sample_period: time = 100 ms) {
             sprintf(buf1, "d: %3.2f", distMovedL+distMovedR);
             sprintf(buf2, "L: %.3f", newLeft*self->speedMulti);
             sprintf(buf3, "R: %.3f", newRight*self->speedMulti);
-            lf_set(notify1, buf1);
-            lf_set(notify2, buf2);
-            lf_set(notify3, buf3);
+            lf_set(notify3, buf1);
+            lf_set(notify1, buf2);
+            lf_set(notify2, buf3);
 
 
             lf_set(motor.left_speed, newLeft*self->speedMulti);
@@ -329,7 +334,7 @@ reactor Robot(sample_period: time = 100 ms) {
 
         =}
 
-        reaction(get_command) ->
+        reaction(get_command, gyro.z, dist.left, dist.right) ->
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
             
             if (strcmp(self->nextCommand, "") == 0) {
@@ -366,10 +371,12 @@ reactor Robot(sample_period: time = 100 ms) {
             string cmdParameter = (self->nextCommand+1);
             char* endptr;
             long num = strtol(cmdParameter, &endptr, 10);
-            if (endptr == '\0')
-                self->speedMulti = (int) num;
-            else 
-                self->speedMulti = 1;
+            
+            self->speedMulti = (int) num;
+            
+            self->startAngle = gyro.z->value;
+            self->startDistL = dist.left->value;
+            self->startDistR = dist.right->value;
 
             printf("multiplier: %d\n", self->speedMulti);
 
@@ -388,7 +395,7 @@ reactor Robot(sample_period: time = 100 ms) {
             
             float distMovedL = dist.left->value - self->startDistL;
             float distMovedR = dist.right->value - self->startDistR;
-            float factor = (distMovedL+distMovedR) * 0.001;
+            float factor = (distMovedL+distMovedR) * 0.0005f;
             float newLeft = (TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
             float newRight = -(TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
 
@@ -396,9 +403,9 @@ reactor Robot(sample_period: time = 100 ms) {
             sprintf(buf1, "d: %3.2f", distMovedL+distMovedR);
             sprintf(buf2, "L: %.3f", newLeft*self->speedMulti);
             sprintf(buf3, "R: %.3f", newRight*self->speedMulti);
-            lf_set(notify1, buf1);
-            lf_set(notify2, buf2);
-            lf_set(notify3, buf3);
+            lf_set(notify3, buf1);
+            lf_set(notify1, buf2);
+            lf_set(notify2, buf3);
 
 
             lf_set(motor.left_speed, newLeft*self->speedMulti);
@@ -406,7 +413,7 @@ reactor Robot(sample_period: time = 100 ms) {
 
         =}
 
-        reaction(get_command) ->
+        reaction(get_command, gyro.z, dist.left, dist.right) ->
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
             
             if (strcmp(self->nextCommand, "") == 0) {
@@ -443,11 +450,13 @@ reactor Robot(sample_period: time = 100 ms) {
             string cmdParameter = (self->nextCommand+1);
             char* endptr;
             long num = strtol(cmdParameter, &endptr, 10);
-            if (endptr == '\0')
-                self->speedMulti = (int) num;
-            else 
-                self->speedMulti = 1;
-
+            
+            self->speedMulti = (int) num;
+            
+            self->startAngle = gyro.z->value;
+            self->startDistL = dist.left->value;
+            self->startDistR = dist.right->value;
+            
             printf("multiplier: %d\n", self->speedMulti);
 
             self->nextCommand = "";
@@ -476,12 +485,12 @@ reactor BTReceiver {
             break;
 
             case 100:
-            lf_set(command, "r5");
+            lf_set(command, "r20");
             printf("sent command\n");
             break;
 
             case 120:
-            lf_set(command, "l1");
+            lf_set(command, "l10");
             printf("sent command\n");
             break;
         }
