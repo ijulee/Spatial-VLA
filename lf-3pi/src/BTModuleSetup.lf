@@ -1,22 +1,24 @@
 /**
- * Lingua Franca program for RP2040 to configure an HC-05 Bluetooth module.
+ * Lingua Franca program for the Pololu 3pi+ 2040 to configure an HC-05 Bluetooth module.
  *
  * This program sends AT commands to change the HC-05's name and password.
  *
+ * I-Jui: Disclaimer, this is adapted from LLM generated code with hallucinated nonsense fixed.
+ *
  * Hardware Setup:
- * 1. RP2040 GP0 (UART0 TX) -> HC-05 RXD
- * 2. RP2040 GP1 (UART0 RX) -> HC-05 TXD
- * 3. RP2040 3.3V (OUT) -> HC-05 VCC
- * 4. RP2040 GND -> HC-05 GND
- * 5. RP2040 3.3V (OUT) -> HC-05 KEY/EN pin (This is VITAL for AT Mode)
+ * 1. GP28 (UART0 TX) -> HC-05 RXD
+ * 2. GP29 (UART0 RX) -> HC-05 TXD
+ * 3. 3V3 (OUT)       -> HC-05 VCC
+ * 4. GND             -> HC-05 GND
+ * 5. 3V3 (OUT)       -> HC-05 EN (only for AT mode to set name/pswd)
  *
  * How to use:
  * 1. Connect the HC-05 as described above.
  * 2. IMPORTANT: Power on the RP2040 (which powers the HC-05) ONLY AFTER
  * the KEY/EN pin is already connected to 3.3V. This boots the
  * module into AT command mode (baud rate 38400).
- * 3. Compile and flash this program to the RP2040.
- * 4. Open the serial monitor (e.g., `lf-watch -b 115200 /dev/ttyACM0`).
+ * 3. Compile and flash this program to the 3pi+ 2040.
+ * 4. Open the serial monitor (e.g., `screen -b 115200 /dev/ttyACM0`).
  * 5. The program will automatically send the commands.
  *
  */
@@ -25,19 +27,21 @@ target C {
         name: "rp2040",
         board: "pololu_3pi_2040_robot"
     },
-    build-type: "release",
-    threading: false,
-    keepalive: true
+    keepalive: true,
+    threading: false
     //stdio-uart: true
 };
 
+import Display from "lib/Display.lf"
+
 preamble {=
-    #include <pico/stdlib.h>
-    #include <pico/stdio.h>
+    #include "pico/stdlib.h"
+    #include <stdio.h>
     #include <hardware/uart.h>
     #include <hardware/irq.h>
     #include <string.h>
 =}
+
 
 main reactor {
     preamble {=
@@ -111,28 +115,27 @@ main reactor {
             uart_puts(UART_ID, "\r\n");
         }
     =}
+
     state cmd_step: int = 0;
-    state new_name: string = "SVLM-bot"; // <-- CHANGE THIS
-    state new_pin: string = "1234";   // <-- CHANGE THIS
+    state new_name: string = "SVLM-bot";
+    state new_pin: string = "1234";
 
     physical action command_delay; // Delay between commands
     physical action check_response; // Triggered by interrupt
+    
+    d = new Display();
 
-    reaction(startup) -> command_delay {=
+    reaction(startup) -> command_delay, d.line0 {=
         // Initialize stdio over USB for printing
         stdio_init_all();
-        // Wait a moment for serial monitor to connect
-        lf_sleep(MSEC(2));
-        printf("RP2040 HC-05 Configurator Started.\n");
-
-        // Initialize UART0 for HC-05
-        setup_hc05_uart();
-
-        // Start the command sequence
-        lf_schedule(command_delay, 0);
+        
+        // Start the command sequence after 5s
+        // starting too quickly and the monitor won't catch it
+        lf_schedule(command_delay, MSEC(5000));
     =}
 
-    reaction(command_delay) {=
+
+    reaction(command_delay) -> d.line0 {=
         // Reset response flag
         response_ready = false;
 
@@ -140,30 +143,42 @@ main reactor {
 
         switch (self->cmd_step) {
             case 0:
-                printf("\nStep 0: Sending AT (Test command)\n");
-                send_at_command("AT");
+                printf("RP2040 HC-05 Configurator Started.\n");
+                lf_set(d.line0, "START");
+                setup_hc05_uart();
+                lf_schedule(command_delay, MSEC(1000));
                 break;
             case 1:
+                printf("\nStep 0: Sending AT (Test command)\n");
+                lf_set(d.line0, "TEST");
+                send_at_command("AT");
+                break;
+            case 2:
                 printf("\nStep 1: Setting Name to '%s'\n", self->new_name);
+                lf_set(d.line0, "NAME");
                 snprintf(command_buffer, 64, "AT+NAME=%s", self->new_name);
                 send_at_command(command_buffer);
                 break;
-            case 2:
+            case 3:
                 printf("\nStep 2: Setting PIN to '%s'\n", self->new_pin);
+                lf_set(d.line0, "PSWD");
                 // Note: PSWD changes the pairing code.
                 snprintf(command_buffer, 64, "AT+PSWD=%s", self->new_pin);
                 send_at_command(command_buffer);
                 break;
-            case 3:
+            case 4:
                 printf("\nStep 3: Querying new name\n");
+                lf_set(d.line0, "NAME?");
                 send_at_command("AT+NAME?");
                 break;
-            case 4:
+            case 5:
                 printf("\nStep 4: Querying new password\n");
+                lf_set(d.line0, "PSWD?");
                 send_at_command("AT+PSWD?");
                 break;
-            case 5:
+            case 6:
                 printf("\nConfiguration complete.\n");
+                lf_set(d.line0, "DONE");
                 // No more commands
                 return;
         }
@@ -173,14 +188,17 @@ main reactor {
 
     // This reaction is triggered by the UART RX interrupt
     // when a full line ('\n') has been received.
-    reaction(check_response) -> command_delay {=
+    reaction(check_response) -> command_delay, d.line1 {=
         if (response_ready) {
             printf("HC-05 Response: %s", (char*)uart_response); // Print the response
+            char buf[17];
+            snprintf(buf, 17, (char*)uart_response);
+            lf_set(d.line1, buf);
             response_ready = false; // Clear the flag
 
             // Schedule the next command after a delay
-            if (self->cmd_step <= 5) {
-                lf_schedule(command_delay, MSEC(2));
+            if (self->cmd_step <= 6) {
+                lf_schedule(command_delay, MSEC(1000));
             }
         }
     =}
