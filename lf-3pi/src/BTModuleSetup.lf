@@ -1,0 +1,199 @@
+/**
+ * Lingua Franca program for RP2040 to configure an HC-05 Bluetooth module.
+ *
+ * This program sends AT commands to change the HC-05's name and password.
+ *
+ * Hardware Setup:
+ * 1. RP2040 GP0 (UART0 TX) -> HC-05 RXD
+ * 2. RP2040 GP1 (UART0 RX) -> HC-05 TXD
+ * 3. RP2040 3.3V (OUT) -> HC-05 VCC
+ * 4. RP2040 GND -> HC-05 GND
+ * 5. RP2040 3.3V (OUT) -> HC-05 KEY/EN pin (This is VITAL for AT Mode)
+ *
+ * How to use:
+ * 1. Connect the HC-05 as described above.
+ * 2. IMPORTANT: Power on the RP2040 (which powers the HC-05) ONLY AFTER
+ * the KEY/EN pin is already connected to 3.3V. This boots the
+ * module into AT command mode (baud rate 38400).
+ * 3. Compile and flash this program to the RP2040.
+ * 4. Open the serial monitor (e.g., `lf-watch -b 115200 /dev/ttyACM0`).
+ * 5. The program will automatically send the commands.
+ *
+ */
+target C {
+    platform: {
+        name: "rp2040",
+        board: "pololu_3pi_2040_robot"
+    },
+    build-type: "release",
+    threading: false,
+    keepalive: true
+    //stdio-uart: true
+};
+
+preamble {=
+    #include <pico/stdlib.h>
+    #include <pico/stdio.h>
+    #include <hardware/uart.h>
+    #include <hardware/irq.h>
+    #include <string.h>
+=}
+
+main reactor {
+    preamble {=
+        // Define the UART for the HC-05
+        #define UART_ID uart0
+        #define BAUD_RATE 38400 // HC-05 AT mode baud rate
+        #define DATA_BITS 8
+        #define STOP_BITS 1
+        #define PARITY    UART_PARITY_NONE
+
+        // Define UART pins
+        #define UART_TX_PIN 28
+        #define UART_RX_PIN 29
+
+        // Buffer to store response from HC-05
+        #define RESPONSE_BUF_SIZE 128
+        volatile char uart_response[RESPONSE_BUF_SIZE];
+        volatile int response_idx = 0;
+        volatile bool response_ready = false;
+
+        // RX interrupt handler
+        void on_uart_rx() {
+            while (uart_is_readable(UART_ID)) {
+                char ch = uart_getc(UART_ID);
+
+                if (response_idx < RESPONSE_BUF_SIZE - 1) {
+                    uart_response[response_idx++] = ch;
+                }
+
+                // End of line character
+                if (ch == '\n') {
+                    uart_response[response_idx] = '\0'; // Null terminate
+                    response_ready = true;
+                    response_idx = 0; // Reset for next message
+                }
+            }
+        }
+
+        // Function to initialize UART0 for the HC-05
+        void setup_hc05_uart() {
+            // Initialize UART
+            uart_init(UART_ID, BAUD_RATE);
+
+            // Set the TX and RX pins
+            gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+            gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+
+            // Set format
+            uart_set_hw_flow(UART_ID, false, false);
+            uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
+
+            // Turn off FIFO's - we want to do this character by character
+            uart_set_fifo_enabled(UART_ID, false);
+
+            // Set up and enable the RX interrupt
+            int UART_IRQ = (UART_ID == uart0) ? UART0_IRQ : UART1_IRQ;
+            irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
+            irq_set_enabled(UART_IRQ, true);
+
+            // Enable the UART to fire an interrupt when data is received.
+            uart_set_irq_enables(UART_ID, true, false);
+
+            printf("UART0 for HC-05 initialized at %d baud.\n", BAUD_RATE);
+        }
+
+        // Function to send a command to the HC-05
+        // All AT commands must end with \r\n
+        void send_at_command(const char* cmd) {
+            printf("Sending: %s\n", cmd);
+            uart_puts(UART_ID, cmd);
+            uart_puts(UART_ID, "\r\n");
+        }
+    =}
+    state cmd_step: int = 0;
+    state new_name: string = "SVLM-bot"; // <-- CHANGE THIS
+    state new_pin: string = "1234";   // <-- CHANGE THIS
+
+    physical action command_delay; // Delay between commands
+    physical action check_response; // Triggered by interrupt
+
+    reaction(startup) -> command_delay {=
+        // Initialize stdio over USB for printing
+        stdio_init_all();
+        // Wait a moment for serial monitor to connect
+        lf_sleep(MSEC(2));
+        printf("RP2040 HC-05 Configurator Started.\n");
+
+        // Initialize UART0 for HC-05
+        setup_hc05_uart();
+
+        // Start the command sequence
+        lf_schedule(command_delay, 0);
+    =}
+
+    reaction(command_delay) {=
+        // Reset response flag
+        response_ready = false;
+
+        char command_buffer[64];
+
+        switch (self->cmd_step) {
+            case 0:
+                printf("\nStep 0: Sending AT (Test command)\n");
+                send_at_command("AT");
+                break;
+            case 1:
+                printf("\nStep 1: Setting Name to '%s'\n", self->new_name);
+                snprintf(command_buffer, 64, "AT+NAME=%s", self->new_name);
+                send_at_command(command_buffer);
+                break;
+            case 2:
+                printf("\nStep 2: Setting PIN to '%s'\n", self->new_pin);
+                // Note: PSWD changes the pairing code.
+                snprintf(command_buffer, 64, "AT+PSWD=%s", self->new_pin);
+                send_at_command(command_buffer);
+                break;
+            case 3:
+                printf("\nStep 3: Querying new name\n");
+                send_at_command("AT+NAME?");
+                break;
+            case 4:
+                printf("\nStep 4: Querying new password\n");
+                send_at_command("AT+PSWD?");
+                break;
+            case 5:
+                printf("\nConfiguration complete.\n");
+                // No more commands
+                return;
+        }
+
+        self->cmd_step++;
+    =}
+
+    // This reaction is triggered by the UART RX interrupt
+    // when a full line ('\n') has been received.
+    reaction(check_response) -> command_delay {=
+        if (response_ready) {
+            printf("HC-05 Response: %s", (char*)uart_response); // Print the response
+            response_ready = false; // Clear the flag
+
+            // Schedule the next command after a delay
+            if (self->cmd_step <= 5) {
+                lf_schedule(command_delay, MSEC(2));
+            }
+        }
+    =}
+
+    // This reaction polls the response_ready flag.
+    // This is necessary because the interrupt handler (on_uart_rx)
+    // cannot schedule a physical action directly.
+    // We poll quickly to check the flag set by the ISR.
+    timer poll_timer(0, 10 msec);
+    reaction(poll_timer) -> check_response {=
+        if (response_ready) {
+            // Schedule the logical action to process the response
+            lf_schedule(check_response, 0);
+        }
+    =}
+}
