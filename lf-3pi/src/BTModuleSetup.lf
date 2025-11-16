@@ -46,7 +46,7 @@ main reactor {
     preamble {=
         // Define the UART for the HC-05
         #define UART_ID uart0
-        #define BAUD_RATE 9600 // HC-05 AT mode baud rate
+        #define BAUD_RATE 38400 // HC-05 AT mode baud rate
         #define DATA_BITS 8
         #define STOP_BITS 1
         #define PARITY    UART_PARITY_NONE
@@ -56,10 +56,10 @@ main reactor {
         #define UART_RX_PIN 29
 
         // Buffer to store response from HC-05
-        #define CMD_BUF_SIZE 128
-        volatile char cmd_buf[CMD_BUF_SIZE];
-        volatile int cmd_idx = 0;
-        volatile bool cmd_ready = false;
+        #define RESP_BUF_SIZE 128
+        volatile char response_buf[RESP_BUF_SIZE];
+        volatile int response_idx = 0;
+        volatile bool response_ready = false;
 
         // RX interrupt handler
         void on_uart_rx() {
@@ -68,23 +68,23 @@ main reactor {
 
                 // Handle backspace/delete for basic terminal editing
                 if (ch == '\b' || ch == 127) {
-                    if (cmd_idx > 0) {
-                        cmd_idx--;
+                    if (response_idx > 0) {
+                        response_idx--;
                     }
                     continue; // Don't add the backspace to the buffer
                 }
 
-                if (response_idx < RESPONSE_BUF_SIZE - 1) {
+                if (response_idx < RESP_BUF_SIZE - 1) {
                     // End of command (Newline or Carriage Return)
                     if (ch == '\n' || ch == '\r') {
-                        if (cmd_idx > 0) { // We have a command
-                            cmd_buf[cmd_idx] = '\0'; // Null-terminate
-                            cmd_ready = true;
-                            cmd_idx = 0; // Reset for next command
+                        if (response_idx > 0) { // We have a command
+                            response_buf[response_idx] = '\0'; // Null-terminate
+                            response_ready = true;
+                            response_idx = 0; // Reset for next command
                         }
                         // if index is 0, just ignore the newline
                     } else {
-                        cmd_buf[cmd_idx++] = ch;
+                        response_buf[response_idx++] = ch;
                     }
                 }
             }
@@ -144,11 +144,12 @@ main reactor {
         lf_schedule(command_delay, MSEC(5000));
     =}
 
+    timer foo(0,1 sec);
+    reaction (foo) {=
+        printf("foo\n");
+    =}
 
     reaction(command_delay) -> d.line0 {=
-        // Reset response flag
-        response_ready = false;
-
         char command_buffer[64];
 
         switch (self->cmd_step) {
@@ -177,16 +178,26 @@ main reactor {
                 setup_msg(command_buffer);
                 break;
             case 4:
-                printf("\nStep 3: Querying new name\n");
+                printf("\nStep 3: Setting UART setting to 9600,0,0\n");
+                lf_set(d.line0, "UART");
+                setup_msg("AT+UART=9600,0,0");
+                break;
+            case 5:
+                printf("\nStep 4: Query UART settings\n");
+                lf_set(d.line0, "UART?");
+                setup_msg("AT+UART?");
+                break;
+            case 6:
+                printf("\nStep 5: Querying new name\n");
                 lf_set(d.line0, "NAME?");
                 setup_msg("AT+NAME?");
                 break;
-            case 5:
-                printf("\nStep 4: Querying new password\n");
+            case 7:
+                printf("\nStep 6: Querying new password\n");
                 lf_set(d.line0, "PSWD?");
                 setup_msg("AT+PSWD?");
                 break;
-            case 6:
+            case 8:
                 printf("\nConfiguration complete.\n");
                 lf_set(d.line0, "DONE");
                 // No more commands
@@ -200,14 +211,14 @@ main reactor {
     // when a full line ('\n') has been received.
     reaction(check_response) -> command_delay, d.line1 {=
         if (response_ready) {
-            printf("HC-05 Response: %s", (char*)uart_response); // Print the response
+            printf("HC-05 Response: %s", (char*)response_buf); // Print the response
             char buf[17];
-            snprintf(buf, 17, (char*)uart_response);
+            snprintf(buf, 17, (char*)response_buf);
             lf_set(d.line1, buf);
             response_ready = false; // Clear the flag
 
             // Schedule the next command after a delay
-            if (self->cmd_step <= 6) {
+            if (self->cmd_step < 9) {
                 lf_schedule(command_delay, MSEC(1000));
             }
         }
