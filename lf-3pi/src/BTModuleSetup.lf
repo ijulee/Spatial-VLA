@@ -63,30 +63,42 @@ main reactor {
 
         // RX interrupt handler
         void on_uart_rx() {
+            // If the main loop hasn't processed the last line,
+            // we must not overwrite the buffer. This is a
+            // simple overflow protection.
+            if (response_ready) {
+                uart_getc(UART_ID); // Discard the character
+                return;
+            }
+
             while (uart_is_readable(UART_ID)) {
                 char ch = uart_getc(UART_ID);
 
-                // Handle backspace/delete for basic terminal editing
                 if (ch == '\b' || ch == 127) {
+                    // Handle backspace/delete
                     if (response_idx > 0) {
                         response_idx--;
                     }
-                    continue; // Don't add the backspace to the buffer
-                }
-
-                if (response_idx < RESP_BUF_SIZE - 1) {
-                    // End of command (Newline or Carriage Return)
-                    if (ch == '\n' || ch == '\r') {
-                        if (response_idx > 0) { // We have a command
-                            response_buf[response_idx] = '\0'; // Null-terminate
-                            response_ready = true;
-                            response_idx = 0; // Reset for next command
-                        }
-                        // if index is 0, just ignore the newline
-                    } else {
+                    continue; // Don't add to buffer
+                } else if (ch == '\n') {
+                    // End of line character
+                    if (response_idx > 0) { // We have a complete line
+                        response_buf[response_idx] = '\0'; // Null terminate
+                        response_ready = true;
+                        // Don't reset the index here, but in LF reaction.
+                        // Exit while loop, so LF reaction can process line.
+                        return;
+                    }
+                    // else: index is 0, just ignore the empty line
+                } else if (ch != '\r') { // Ignore carriage returns
+                    if (response_idx < RESP_BUF_SIZE - 1) {
                         response_buf[response_idx++] = ch;
                     }
+                    // else: buffer overflow, char is lost
                 }
+                
+                // Check again in case the line was perfectly full
+                //if (response_ready) return;
             }
         }
 
@@ -210,18 +222,32 @@ main reactor {
     // This reaction is triggered by the UART RX interrupt
     // when a full line ('\n') has been received.
     reaction(check_response) -> command_delay, d.line1 {=
-        if (response_ready) {
-            printf("HC-05 Response: %s", (char*)response_buf); // Print the response
+        volatile char* resp = (char*) response_buf;
+        // We can safely read the response.
+        printf("HC-05 Response: %s\n", resp); // Print the line
+
+        // Check for terminal responses "OK" or "ERROR"
+        // We stripped \r and \n, so we just check for "OK".
+        bool is_terminal = (strcmp(resp, "OK") == 0) || 
+                           (strstr(resp, "ERROR") != NULL);
+        
+        // Clear the buffer and reset the index *after* processing.
+        response_buf[0] = '\0';
+        response_idx = 0;
+
+        // Atomically clear the flag. The ISR can now write to the buffer.
+        response_ready = false;
+
+        if (is_terminal) {
             char buf[17];
-            snprintf(buf, 17, (char*)response_buf);
+            snprintf(buf, 17, "%s", resp);
             lf_set(d.line1, buf);
-            response_ready = false; // Clear the flag
 
             // Schedule the next command after a delay
             if (self->cmd_step < 9) {
                 lf_schedule(command_delay, MSEC(1000));
             }
-        }
+        } // else waiit for terminal response from BT module
     =}
 
     // This reaction polls the response_ready flag.
