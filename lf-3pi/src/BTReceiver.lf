@@ -161,7 +161,7 @@ main reactor {
         line_ready = false; 
     =}
 
-    reaction (disp_refresh) -> d.line0, d.line1, motor.left_speed, motor.right_speed {=
+    reaction (disp_refresh) -> d.line0, d.line1, motor.left_power, motor.right_power {=
         static char buf[17];
         snprintf(buf, 17, "%c", self->cur_state);
         lf_set(d.line1, buf);
@@ -169,28 +169,28 @@ main reactor {
         switch (self->cur_state) {
             case 'f':
                 lf_set(d.line0, "FORWARD");
-                lf_set(motor.left_speed, 0.1f);
-                lf_set(motor.right_speed, 0.1f);
+                lf_set(motor.left_power, 0.1f);
+                lf_set(motor.right_power, 0.1f);
                 break;
             case 'b':
                 lf_set(d.line0, "BACK");
-                lf_set(motor.left_speed, -0.1f);
-                lf_set(motor.right_speed, -0.1f);
+                lf_set(motor.left_power, -0.1f);
+                lf_set(motor.right_power, -0.1f);
                 break;
             case 'l':
                 lf_set(d.line0, "LEFT");
-                lf_set(motor.left_speed, -0.1f);
-                lf_set(motor.right_speed, 0.1f);
+                lf_set(motor.left_power, -0.1f);
+                lf_set(motor.right_power, 0.1f);
                 break;
             case 'r':
                 lf_set(d.line0, "RIGHT");
-                lf_set(motor.left_speed, 0.1f);
-                lf_set(motor.right_speed, -0.1f);
+                lf_set(motor.left_power, 0.1f);
+                lf_set(motor.right_power, -0.1f);
                 break;
             case 's':
                 lf_set(d.line0, "STOP");
-                lf_set(motor.left_speed, 0.0f);
-                lf_set(motor.right_speed, 0.0f);
+                lf_set(motor.left_power, 0.0f);
+                lf_set(motor.right_power, 0.0f);
                 break;
             default:
                 lf_set(d.line0, "UNKNOWN!");
