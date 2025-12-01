@@ -8,8 +8,8 @@ from inference.core.interfaces.stream.sinks import render_boxes
 import supervision as sv
 from typing import Any, List
 from ultralytics import YOLO
-
-
+from PIL import ImageGrab
+import mss
 class LiveSink:
     def __init__(self, window_name="Live Inference"):
         self.window_name = window_name
@@ -96,11 +96,11 @@ parser.add_argument("--path",action='store_true')
 parser.add_argument("--custom",action='store_true')
 parser.add_argument( "--model",type=str, nargs=1, default="yolo11n.pt")
 parser.add_argument("-p","--port", type=str, nargs="?", default=0)
+parser.add_argument("-m", "--monitor", type=int, nargs="?")
 parser.add_argument("--train", nargs=1 )
 args = parser.parse_args()
 
 if args.train is not None:
-    
     model = YOLO(args.model[0]) 
 # Train the model on the COCO8 dataset for 100 epochs
     model.train(
@@ -125,23 +125,37 @@ if args.video is not None:
             on_video_frame=model.infer,
             on_prediction=my_render
         )
+
         with sink:
             pipeline.start()
             pipeline.join()
             sink.stop()
 
 
+else:
+    if args.monitor is not None: 
+            sct = mss.mss()
+            print("hwello")
+
+            # while(True):
+            #     img = sct.grab(sct.monitors[1])
+            #     cv2.imshow(img)
+            #     if(cv2.waitKey(1) & 0xFF == ord("q")):
+            #         break
+            pipeline = InferencePipeline.init(
+                video_reference=sct.grab(sct.monitors[1]),
+                model_id="yolov8n-640",
+                on_prediction=render_boxes
+            )
     else:
-        
         pipeline = InferencePipeline.init(
-            video_reference=path,
-            model_id="yolov8n-640",
-            on_prediction=render_boxes
-        )
+                video_reference=args.port,
+                model_id="yolov8n-640",
+                on_prediction=render_boxes
+            )
         
     
         pipeline.start()
         pipeline.join()
 
 cv2.destroyAllWindows()
-
