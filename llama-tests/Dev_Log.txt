@@ -6,6 +6,7 @@ Setup:
     -pip install huggingface-hub
     -pip install -U transformers --upgrade
     -pip install accelerate
+    -LAB BENCH: pip install nvidia-cuda-nvcc
     -nvcc --version
         -Download Pytorch with the cuda version listed from the command above and the link below
         -https://pytorch.org/get-started/locally/
@@ -15,7 +16,14 @@ Setup:
     -huggingface-cli hf auth login
         -ALT: huggingface-cli login
             -This might be the more appropriate one since we are using huggingface 0.31 something
+    -FOR LAB BENCH USE:
+        -setx PATH "%PATH%";C:\Users\randybui\AppData\Local\Programs\Python\Python310;C:\Users\randybui\AppData\Local\Programs\Python\Python310\Scripts
+        -after downloading python, lets us access pip and python without copying .exe path.
+        -I am NOT going to use venv here because the computers don't allow me to.
+            -So I am going to just directly do everything here.
+                -Currently on Computer 2 in the lab, use this computer to not have to deal with portability.
     
+
 Comments:
     -Really annoying error is persistant on my machine where I can only download dependencies into the environment by explicitly calling executables
         inside of the environment
@@ -49,3 +57,11 @@ Comments:
         -Start: 11/30/2025 4:40 PM
         -Prompt recieved: 11/30/2025 Never
     
+
+
+                -==================================== LAB BENCH STUFF =======================================-
+    -Starting free volume of disk: 719 GB
+        -end free volume:
+
+
+    -https://docs.unsloth.ai/get-started/beginner-start-here/unsloth-requirements LOOK INTO THIS!!
