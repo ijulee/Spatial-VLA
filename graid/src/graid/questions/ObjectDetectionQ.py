@@ -174,6 +174,96 @@ class ObjectDetectionPredicates:
                     return True
         return False
 
+### <-- CUSTOM QUESTIONS HERE --> ###
+
+class OneOrMorePeople(Question):
+    def __init__(self) -> None:
+        """Create a *One-Or-More-People* question."""
+        super().__init__(
+            question=(
+                "Are there one or more people in the image? Respond with 'Yes' or 'No'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        for det in detections:
+            lbl = det.label
+            if isinstance(lbl, torch.Tensor):
+                if any(str(l) == "person" for l in lbl):
+                    return [(self.question, "Yes")]
+            if str(lbl) == "person":
+                return [(self.question, "Yes")]
+        return [(self.question, "No")]
+
+
+class IsPersonAtBench(Question):
+    def __init__(self) -> None:
+        """Create a *Is-Person-At-Bench-X* question."""
+        super().__init__(
+            question=(
+                "Number the benches in the image from left to right, starting with 1. "
+                "Is there a person at bench number {bench_number}? Respond with 'Yes' or 'No'."
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        benches = []
+        persons = []
+
+        # collect bench and person detections
+        for det in detections:
+            lbl = det.label
+            bboxes = det.as_xyxy()
+            if isinstance(lbl, torch.Tensor):
+                for i, l in enumerate(lbl):
+                    if str(l) == "bench":
+                        benches.append(bboxes[i])
+                    elif str(l) == "person":
+                        persons.append(bboxes[i])
+            else:
+                if str(lbl) == "bench":
+                    benches.append(bboxes[0])
+                elif str(lbl) == "person":
+                    persons.append(bboxes[0])
+
+        if len(benches) == 0 or len(persons) == 0:
+            return [] # no benches or persons detected
+        
+        # compute centroids
+        def centroid(bbox):
+            x1, y1, x2, y2 = map(float, bbox)
+            return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+        
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        person_centroids = [centroid(bbox) for bbox in persons]
+
+        # sort benches left to right
+        bench_order = sorted(range(len(benches)), key=lambda i: bench_centroids[i][0])
+
+        # assign each person to nearest bench
+        bench_occupancy = [False] * len(benches)
+        for pc in person_centroids:
+            dists = [np.linalg.norm(np.array(pc) - np.array(bc)) for bc in bench_centroids]
+            nearest_bench = np.argmin(dists)
+            bench_occupancy[nearest_bench] = True
+
+        qas = []
+        for rank, bench_idx in enumerate(bench_order):
+            question = self.question.format(bench_number=rank + 1)
+            answer = "Yes" if bench_occupancy[bench_idx] else "No"
+            qas.append((question, answer))
+
+        return qas
+
+### <-- ORIGINAL GRAID QUESTIONS --> ###
 
 class IsObjectCentered(Question):
     def __init__(self, buffer_ratio: float = 0.05) -> None:
