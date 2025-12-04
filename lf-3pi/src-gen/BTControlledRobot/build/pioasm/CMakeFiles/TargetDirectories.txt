@@ -1,3 +1,0 @@
-/home/foobar/Spatial-VLA/lf-3pi/src-gen/BTControlledRobot/build/pioasm/CMakeFiles/pioasm.dir
-/home/foobar/Spatial-VLA/lf-3pi/src-gen/BTControlledRobot/build/pioasm/CMakeFiles/edit_cache.dir
-/home/foobar/Spatial-VLA/lf-3pi/src-gen/BTControlledRobot/build/pioasm/CMakeFiles/rebuild_cache.dir
