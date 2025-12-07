@@ -176,6 +176,37 @@ class ObjectDetectionPredicates:
 
 ### <-- CUSTOM QUESTIONS HERE --> ###
 
+# some helper functions
+def collect_detections_by_label(detections, target_labels):
+    label_to_bboxes = {label: [] for label in target_labels}
+    for det in detections:
+        lbl = det.label
+        bboxes = det.as_xyxy()
+        if isinstance(lbl, torch.Tensor):
+            for i, l in enumerate(lbl):
+                str_l = str(l)
+                if str_l in target_labels:
+                    label_to_bboxes[str_l].append(bboxes[i])
+        else:
+            str_lbl = str(lbl)
+            if str_lbl in target_labels:
+                label_to_bboxes[str_lbl].append(bboxes[0])
+    return label_to_bboxes
+
+def centroid(bbox):
+    x1, y1, x2, y2 = map(float, bbox)
+    return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+
+def assign_persons_to_benches(person_centroids, bench_centroids):
+    # assign each person to nearest bench
+    bench_occupancy = [0] * len(bench_centroids)
+    for pc in person_centroids:
+        dists = [np.linalg.norm(np.array(pc) - np.array(bc)) for bc in bench_centroids]
+        nearest_bench = np.argmin(dists)
+        bench_occupancy[nearest_bench] += 1
+
+    return bench_occupancy
+
 class OneOrMorePeople(Question):
     def __init__(self) -> None:
         """Create a *One-Or-More-People* question."""
@@ -215,32 +246,13 @@ class IsPersonAtBench(Question):
         )
 
     def apply(self, image, detections):
-        benches = []
-        persons = []
-
         # collect bench and person detections
-        for det in detections:
-            lbl = det.label
-            bboxes = det.as_xyxy()
-            if isinstance(lbl, torch.Tensor):
-                for i, l in enumerate(lbl):
-                    if str(l) == "bench":
-                        benches.append(bboxes[i])
-                    elif str(l) == "person":
-                        persons.append(bboxes[i])
-            else:
-                if str(lbl) == "bench":
-                    benches.append(bboxes[0])
-                elif str(lbl) == "person":
-                    persons.append(bboxes[0])
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person"])
+        benches = labeled_bboxes["bench"]
+        persons = labeled_bboxes["person"]
 
         if len(benches) == 0 or len(persons) == 0:
             return [] # no benches or persons detected
-        
-        # compute centroids
-        def centroid(bbox):
-            x1, y1, x2, y2 = map(float, bbox)
-            return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
         
         bench_centroids = [centroid(bbox) for bbox in benches]
         person_centroids = [centroid(bbox) for bbox in persons]
@@ -249,19 +261,174 @@ class IsPersonAtBench(Question):
         bench_order = sorted(range(len(benches)), key=lambda i: bench_centroids[i][0])
 
         # assign each person to nearest bench
-        bench_occupancy = [False] * len(benches)
-        for pc in person_centroids:
-            dists = [np.linalg.norm(np.array(pc) - np.array(bc)) for bc in bench_centroids]
-            nearest_bench = np.argmin(dists)
-            bench_occupancy[nearest_bench] = True
+        bench_occupancy = assign_persons_to_benches(person_centroids, bench_centroids)
 
         qas = []
         for rank, bench_idx in enumerate(bench_order):
             question = self.question.format(bench_number=rank + 1)
-            answer = "Yes" if bench_occupancy[bench_idx] else "No"
+            answer = "Yes" if bench_occupancy[bench_idx] > 0 else "No"
             qas.append((question, answer))
 
         return qas
+
+
+class ClosestToFurthestBenches(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Number the benches in the image from left to right, starting with 1. "
+                "List the benches in order from closest to furthest from the bus, separated by commas."
+                "For example, '1, 2, 3'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "bus"])
+        benches = labeled_bboxes["bench"]
+        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+
+        if len(benches) == 0 or bus_bbox is None:
+            return [] # no benches or bus detected
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bus_centroid = centroid(bus_bbox)
+
+        # sort benches left to right
+        bench_order = sorted(range(len(benches)), key=lambda i: bench_centroids[i][0])
+        bench_num = {idx: num for num, idx in enumerate(bench_order, start=1)}
+
+        # compute distances to bus and sort
+        bench_distances = [np.linalg.norm(np.array(bench_centroids[i]) - np.array(bus_centroid)) for i in range(len(benches))]
+        idx_by_distance = [bench_num[idx] for idx in sorted(range(len(benches)), key=lambda i: bench_distances[i])]
+
+        return [(self.question, ", ".join(map(str, idx_by_distance)))]
+    
+
+class PersonAtClosestBench(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Are there people at the bench closest to the bus? Respond with 'Yes' or 'No'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        benches = []
+        persons = []
+        bus_bbox = None
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person", "bus"])
+        benches = labeled_bboxes["bench"] if "bench" in labeled_bboxes else []
+        persons = labeled_bboxes["person"] if "person" in labeled_bboxes else []
+        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+
+        if len(benches) == 0 or len(persons) == 0 or bus_bbox is None:
+            return [] # no benches, persons, or bus detected
+        
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        person_centroids = [centroid(bbox) for bbox in persons]
+        bus_centroid = centroid(bus_bbox)
+
+        # find closest bench to bus
+        bench_distances = [np.linalg.norm(np.array(bc) - np.array(bus_centroid)) for bc in bench_centroids]
+        closest_bench_idx = np.argmin(bench_distances)
+
+        # check if any person is at closest bench
+        bench_occupancy = assign_persons_to_benches(person_centroids, bench_centroids)
+        if bench_occupancy[closest_bench_idx] > 0:
+            return [(self.question, "Yes")]
+
+        return [(self.question, "No")]
+
+class ClosestBenchWithPerson(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Which bench is closest to the bus that has at least one person at it? "
+                "Number the benches from left to right, starting with 1. "
+                "If no benches have people, respond with '0'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+    
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person", "bus"])
+        benches = labeled_bboxes["bench"] if "bench" in labeled_bboxes else []
+        persons = labeled_bboxes["person"] if "person" in labeled_bboxes else []
+        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+
+        if len(benches) == 0 or len(persons) == 0 or bus_bbox is None:
+            return [] # no benches, persons, or bus detected
+        
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        person_centroids = [centroid(bbox) for bbox in persons]
+        bus_centroid = centroid(bus_bbox)
+
+        # sort benches left to right
+        bench_order = sorted(range(len(benches)), key=lambda i: bench_centroids[i][0])
+        bench_num = {idx: num for num, idx in enumerate(bench_order, start=1)}
+
+        # find order of benches by distance to bus
+        bench_distances = [np.linalg.norm(np.array(bc) - np.array(bus_centroid)) for bc in bench_centroids]
+        bench_order_by_distance = sorted(range(len(benches)), key=lambda i: bench_distances[i])
+
+        # assign each person to nearest bench
+        bench_occupancy = assign_persons_to_benches(person_centroids, bench_centroids)
+        for idx in bench_order_by_distance:
+            if bench_occupancy[idx] > 0:
+                return [(self.question, str(bench_num[idx]))]
+
+        return [(self.question, "0")]
+    
+
+class ArrivedAtBench(Question):
+    def __init__(self, dist_threshold) -> None:
+        super().__init__(
+            question=(
+                "Number the benches in the image from left to right, starting with 1. "
+                "Has the bus arrived at bench number {bench_number}? Respond with 'Yes' or 'No'."
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],  
+        )    
+        self.dist_threshold: float = dist_threshold
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "bus"])
+        benches = labeled_bboxes["bench"]
+        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+
+        if len(benches) == 0 or bus_bbox is None:
+            return [] # no benches or bus detected
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bus_centroid = centroid(bus_bbox)
+
+        # sort benches left to right
+        bench_order = sorted(range(len(benches)), key=lambda i: bench_centroids[i])
+
+        # compute distances to bus and sort
+        bench_distances = [np.linalg.norm(np.array(bench_centroids[i]) - np.array(bus_centroid)) for i in range(len(benches))]
+
+        qas = []
+        for rank, bench_idx in enumerate(bench_order):
+            question = self.question.format(bench_number=rank + 1)
+            answer = "Yes" if bench_distances[bench_idx] < self.dist_threshold else "No"
+            qas.append((question, answer))
+
+        return qas
+
 
 ### <-- ORIGINAL GRAID QUESTIONS --> ###
 
