@@ -305,6 +305,8 @@ class ClosestToFurthestBenches(Question):
                 "Number the benches in the image from left to right, starting with 1. "
                 "List the benches in order from closest to furthest from the bus, separated by commas."
                 "For example, '1, 2, 3'."
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus."
             ),
             variables=[],
             predicates=[
@@ -312,9 +314,9 @@ class ClosestToFurthestBenches(Question):
             ],
         )
     def apply(self, image, detections):
-        labeled_bboxes = collect_detections_by_label(detections, ["bench", "bus"])
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
         benches = labeled_bboxes["bench"]
-        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+        bus_bbox = labeled_bboxes["clock"][0] if "clock" in labeled_bboxes else None
 
         if len(benches) == 0 or bus_bbox is None:
             return [] # no benches or bus detected
@@ -338,6 +340,8 @@ class PersonAtClosestBench(Question):
         super().__init__(
             question=(
                 "Are there people at the bench closest to the bus? Respond with 'Yes' or 'No'."
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus."
             ),
             variables=[],
             predicates=[
@@ -349,10 +353,10 @@ class PersonAtClosestBench(Question):
         benches = []
         persons = []
         bus_bbox = None
-        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person", "bus"])
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person", "clock"])
         benches = labeled_bboxes["bench"] if "bench" in labeled_bboxes else []
         persons = labeled_bboxes["person"] if "person" in labeled_bboxes else []
-        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+        bus_bbox = labeled_bboxes["clock"][0] if "clock" in labeled_bboxes else None
 
         if len(benches) == 0 or len(persons) == 0 or bus_bbox is None:
             return [] # no benches, persons, or bus detected
@@ -379,6 +383,8 @@ class ClosestBenchWithPerson(Question):
                 "Which bench is closest to the bus that has at least one person at it? "
                 "Number the benches from left to right, starting with 1. "
                 "If no benches have people, respond with '0'."
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus."
             ),
             variables=[],
             predicates=[
@@ -387,10 +393,10 @@ class ClosestBenchWithPerson(Question):
         )
     
     def apply(self, image, detections):
-        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person", "bus"])
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person", "clock"])
         benches = labeled_bboxes["bench"] if "bench" in labeled_bboxes else []
         persons = labeled_bboxes["person"] if "person" in labeled_bboxes else []
-        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+        bus_bbox = labeled_bboxes["clock"][0] if "clock" in labeled_bboxes else None
 
         if len(benches) == 0 or len(persons) == 0 or bus_bbox is None:
             return [] # no benches, persons, or bus detected
@@ -422,6 +428,8 @@ class ArrivedAtBench(Question):
             question=(
                 "Number the benches in the image from left to right, starting with 1. "
                 "Has the bus arrived at bench number {bench_number}? Respond with 'Yes' or 'No'."
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus."
             ),
             variables=["bench_number"],
             predicates=[
@@ -431,9 +439,9 @@ class ArrivedAtBench(Question):
         self.dist_threshold: float = dist_threshold
 
     def apply(self, image, detections):
-        labeled_bboxes = collect_detections_by_label(detections, ["bench", "bus"])
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
         benches = labeled_bboxes["bench"]
-        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+        bus_bbox = labeled_bboxes["clock"][0] if "clock" in labeled_bboxes else None
 
         if len(benches) == 0 or bus_bbox is None:
             return [] # no benches or bus detected
@@ -461,8 +469,10 @@ class ClosestToFurthestStopSigns(Question):
         super().__init__(
             question=(
                 "Number the stop signs in the image from left to right, starting with 1. "
-                "List the stop signs in order from closest to furthest from the bus, separated by commas."
-                "For example, '1, 2, 3'."
+                "List the stop signs in order from closest to furthest from the bus, separated by commas. "
+                "For example, '1, 2, 3'. "
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus."
             ),
             variables=[],
             predicates=[
@@ -471,9 +481,9 @@ class ClosestToFurthestStopSigns(Question):
         )
 
     def apply(self, image, detections):
-        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "bus"])
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "clock"])
         stop_signs = labeled_bboxes["stop sign"]
-        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+        bus_bbox = labeled_bboxes["clock"][0] if "clock" in labeled_bboxes else None
 
         if len(stop_signs) == 0 or bus_bbox is None:
             return [] # no stop signs or bus detected
@@ -498,7 +508,7 @@ class IsAnimalAtStopSign(Question):
             question=(
                 "Number the stop signs in the image from left to right, starting with 1. "
                 "Is there an animal at stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'. "
-                "Animals exclude persons but include giraffes, elephants, zebras, etc."
+                "Animals exclude persons but include giraffes, elephants, and zebras."
             ),
             variables=["stop_sign_number"],
             predicates=[
@@ -577,6 +587,8 @@ class ArrivedAtStopSign(Question):
             question=(
                 "Number the stop signs in the image from left to right, starting with 1. "
                 "Has the bus arrived at stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'."
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus."
             ),
             variables=["stop_sign_number"],
             predicates=[
@@ -586,9 +598,9 @@ class ArrivedAtStopSign(Question):
         self.dist_threshold: float = dist_threshold
 
     def apply(self, image, detections):
-        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "bus"])
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "clock"])
         stop_signs = labeled_bboxes["stop sign"]
-        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+        bus_bbox = labeled_bboxes["clock"][0] if "clock" in labeled_bboxes else None
 
         if len(stop_signs) == 0 or bus_bbox is None:
             return [] # no stop signs or bus detected
@@ -615,9 +627,11 @@ class PathBlockedBetweenObjects(Question):
         super().__init__(
             question=(
                 "Number all objects in the image from left to right, starting with 1. "
-                "Objects include persons, benches, stop signs, buses, footballs, basketballs, giraffes, elephants, zebras, etc."
+                "Objects include persons, benches, stop signs, buses, giraffes, elephants, and zebras. "
                 "Is the path between object number {object_1} and object number {object_2} blocked by any other object? "
-                "Do no consider the objects themselves as blocking. Respond with 'Yes' or 'No'."
+                "Do no consider the objects themselves as blocking. Respond with 'Yes' or 'No'. "
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus. "
             ),
             variables=["object_1", "object_2"],
             predicates=[
@@ -626,7 +640,7 @@ class PathBlockedBetweenObjects(Question):
         )
     def apply(self, image, detections):
         labeled_bboxes = collect_detections_by_label(detections, [
-            "person", "bench", "stop sign", "bus", "football", "basketball", "giraffe", "elephant", "zebra"
+            "person", "bench", "stop sign", "clock", "giraffe", "elephant", "zebra"
         ])
         all_bboxes = []
         for bboxes in labeled_bboxes.values():
@@ -668,9 +682,11 @@ class CanRobotPassBetweenObjects(Question):
         super().__init__(
             question=(
                 "Number all objects in the image from left to right, starting with 1. "
-                "Objects include persons, benches, stop signs, giraffes, elephants, zebras."
+                "Objects include persons, benches, stop signs, giraffes, elephants, zebras. Do not include buses. "
                 "Can a robot of width {pass_width} units pass between object number {object_1} and object number {object_2} without colliding with them?"
-                "Respond with 'Yes' or 'No'."
+                "Respond with 'Yes' or 'No'. "
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus. "
             ),
             variables=["object_1", "object_2"],
             predicates=[
@@ -728,9 +744,11 @@ class IsRobotBetweenObjects(Question):
         super().__init__(
             question=(
                 "Number all objects in the image from left to right, starting with 1. "
-                "Objects include persons, benches, stop signs, giraffes, elephants, zebras."
-                "Is there a robot located between object number {object_1} and object number {object_2}?"
-                "Respond with 'Yes' or 'No'."
+                "Objects include persons, benches, stop signs, giraffes, elephants, zebras. Do not include buses. "
+                "Is there a bus located between object number {object_1} and object number {object_2}? "
+                "Respond with 'Yes' or 'No'. "
+                "The bus is marked by a clock, i.e., the clock represents the bus position. "
+                "Any time you see a clock in the image, treat it as the bus. "
             ),
             variables=["object_1", "object_2"],
             predicates=[
@@ -740,11 +758,11 @@ class IsRobotBetweenObjects(Question):
 
     def apply(self, image, detections):
         labeled_bboxes = collect_detections_by_label(detections, [
-            "person", "bench", "stop sign", "bus", "giraffe", "elephant", "zebra"
+            "person", "bench", "stop sign", "clock", "giraffe", "elephant", "zebra"
         ])
-        if "bus" in labeled_bboxes:
+        if "clock" in labeled_bboxes:
             # pop into bus_bbox
-            bus_bbox = labeled_bboxes.pop("bus")[0]
+            bus_bbox = labeled_bboxes.pop("clock")[0]
         all_bboxes = []
         for bboxes in labeled_bboxes.values():
             all_bboxes.extend(bboxes)
