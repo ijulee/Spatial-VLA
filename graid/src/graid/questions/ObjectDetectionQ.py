@@ -197,15 +197,41 @@ def centroid(bbox):
     x1, y1, x2, y2 = map(float, bbox)
     return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
 
-def assign_persons_to_benches(person_centroids, bench_centroids):
-    # assign each person to nearest bench
-    bench_occupancy = [0] * len(bench_centroids)
-    for pc in person_centroids:
-        dists = [np.linalg.norm(np.array(pc) - np.array(bc)) for bc in bench_centroids]
-        nearest_bench = np.argmin(dists)
-        bench_occupancy[nearest_bench] += 1
+def assign_objects_to_location(object_centroids, location_centroids):
+    # assign each object to nearest location
+    location_occupancy = [0] * len(location_centroids)
+    for oc in object_centroids:
+        dists = [np.linalg.norm(np.array(oc) - np.array(lc)) for lc in location_centroids]
+        nearest_location = np.argmin(dists)
+        location_occupancy[nearest_location] += 1
 
-    return bench_occupancy
+    return location_occupancy
+
+def check_path_blocked(bbox1, bbox2, bbox_other):
+    # check if the path between bbox1 and bbox2 is blocked by bbox_other
+    c1 = centroid(bbox1) # just use centroid of two objects of interest
+    c2 = centroid(bbox2)
+
+    # use slab method to check if line segment c1-c2 intersects bbox_other
+    x_min, y_min, x_max, y_max = map(float, bbox_other)
+    dx = c2[0] - c1[0]
+    dy = c2[1] - c1[1]
+
+    t_min = -math.inf
+    t_max = math.inf
+    if dx != 0:
+        t1 = (x_min - c1[0]) / dx
+        t2 = (x_max - c1[0]) / dx
+        t_min = max(t_min, min(t1, t2))
+        t_max = min(t_max, max(t1, t2))
+
+    if dy != 0:
+        t1 = (y_min - c1[1]) / dy
+        t2 = (y_max - c1[1]) / dy
+        t_min = max(t_min, min(t1, t2))
+        t_max = min(t_max, max(t1, t2))
+
+    return t_max >= t_min and t_max >= 0 and t_min <= 1
 
 class OneOrMorePeople(Question):
     def __init__(self) -> None:
@@ -261,7 +287,7 @@ class IsPersonAtBench(Question):
         bench_order = sorted(range(len(benches)), key=lambda i: bench_centroids[i][0])
 
         # assign each person to nearest bench
-        bench_occupancy = assign_persons_to_benches(person_centroids, bench_centroids)
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
 
         qas = []
         for rank, bench_idx in enumerate(bench_order):
@@ -340,7 +366,7 @@ class PersonAtClosestBench(Question):
         closest_bench_idx = np.argmin(bench_distances)
 
         # check if any person is at closest bench
-        bench_occupancy = assign_persons_to_benches(person_centroids, bench_centroids)
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
         if bench_occupancy[closest_bench_idx] > 0:
             return [(self.question, "Yes")]
 
@@ -382,7 +408,7 @@ class ClosestBenchWithPerson(Question):
         bench_order_by_distance = sorted(range(len(benches)), key=lambda i: bench_distances[i])
 
         # assign each person to nearest bench
-        bench_occupancy = assign_persons_to_benches(person_centroids, bench_centroids)
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
         for idx in bench_order_by_distance:
             if bench_occupancy[idx] > 0:
                 return [(self.question, str(bench_num[idx]))]
@@ -426,6 +452,327 @@ class ArrivedAtBench(Question):
             question = self.question.format(bench_number=rank + 1)
             answer = "Yes" if bench_distances[bench_idx] < self.dist_threshold else "No"
             qas.append((question, answer))
+
+        return qas
+
+
+class ClosestToFurthestStopSigns(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Number the stop signs in the image from left to right, starting with 1. "
+                "List the stop signs in order from closest to furthest from the bus, separated by commas."
+                "For example, '1, 2, 3'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "bus"])
+        stop_signs = labeled_bboxes["stop sign"]
+        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+
+        if len(stop_signs) == 0 or bus_bbox is None:
+            return [] # no stop signs or bus detected
+
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        bus_centroid = centroid(bus_bbox)
+
+        # sort stop signs left to right
+        stop_sign_order = sorted(range(len(stop_signs)), key=lambda i: stop_sign_centroids[i][0])
+        stop_sign_num = {idx: num for num, idx in enumerate(stop_sign_order, start=1)}
+
+        # compute distances to bus and sort
+        stop_sign_distances = [np.linalg.norm(np.array(stop_sign_centroids[i]) - np.array(bus_centroid)) for i in range(len(stop_signs))]
+        idx_by_distance = [stop_sign_num[idx] for idx in sorted(range(len(stop_signs)), key=lambda i: stop_sign_distances[i])]
+        return [(self.question, ", ".join(map(str, idx_by_distance)))]
+    
+
+class IsAnimalAtStopSign(Question):
+    def __init__(self) -> None:
+        """Create a *Is-Animal-At-StopSign-X* question."""
+        super().__init__(
+            question=(
+                "Number the stop signs in the image from left to right, starting with 1. "
+                "Is there an animal at stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'. "
+                "Animals exclude persons but include giraffes, elephants, zebras, etc."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        # collect stop sign and animal detections
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "giraffe", "elephant", "zebra"])
+        stop_signs = labeled_bboxes["stop sign"]
+        animals = labeled_bboxes["giraffe"] + labeled_bboxes["elephant"] + labeled_bboxes["zebra"]
+
+        if len(stop_signs) == 0 or len(animals) == 0:
+            return [] # no stop signs or animals detected
+        
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        animal_centroids = [centroid(bbox) for bbox in animals]
+
+        # sort stop signs left to right
+        stop_sign_order = sorted(range(len(stop_signs)), key=lambda i: stop_sign_centroids[i][0])
+
+        # assign each animal to nearest stop sign
+        stop_sign_occupancy = assign_objects_to_location(animal_centroids, stop_sign_centroids)
+
+        qas = []
+        for rank, stop_sign_idx in enumerate(stop_sign_order):
+            question = self.question.format(stop_sign_number=rank + 1)
+            answer = "Yes" if stop_sign_occupancy[stop_sign_idx] > 0 else "No"
+            qas.append((question, answer))
+
+        return qas
+    
+
+class StopSignWithMostAnimals(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Number the stop signs from left to right, starting with 1. "
+                "Which stop sign has the most animals at it? "
+                "If no stop signs have animals, respond with '0'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "giraffe", "elephant", "zebra"])
+        stop_signs = labeled_bboxes["stop sign"] if "stop sign" in labeled_bboxes else []
+        animals = labeled_bboxes["giraffe"] + labeled_bboxes["elephant"] + labeled_bboxes["zebra"]
+
+        if len(stop_signs) == 0:
+            return [] # no stop signs or animals detected
+        if len(animals) == 0:
+            return [(self.question, "0")]
+        
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        animal_centroids = [centroid(bbox) for bbox in animals]
+
+        # sort stop signs left to right
+        stop_sign_order = sorted(range(len(stop_signs)), key=lambda i: stop_sign_centroids[i][0])
+        stop_sign_num = {idx: num for num, idx in enumerate(stop_sign_order, start=1)}
+
+        # assign each animal to nearest stop sign
+        stop_sign_occupancy = assign_objects_to_location(animal_centroids, stop_sign_centroids)
+        max_occupancy_idx = np.argmax(stop_sign_occupancy)
+        
+        return [(self.question, str(stop_sign_num[max_occupancy_idx]))]
+
+
+class ArrivedAtStopSign(Question):
+    def __init__(self, dist_threshold) -> None:
+        super().__init__(
+            question=(
+                "Number the stop signs in the image from left to right, starting with 1. "
+                "Has the bus arrived at stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],  
+        )    
+        self.dist_threshold: float = dist_threshold
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "bus"])
+        stop_signs = labeled_bboxes["stop sign"]
+        bus_bbox = labeled_bboxes["bus"][0] if "bus" in labeled_bboxes else None
+
+        if len(stop_signs) == 0 or bus_bbox is None:
+            return [] # no stop signs or bus detected
+
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        bus_centroid = centroid(bus_bbox)
+
+        # sort stop signs left to right
+        stop_sign_order = sorted(range(len(stop_signs)), key=lambda i: stop_sign_centroids[i])
+
+        # compute distances to bus and sort
+        stop_sign_distances = [np.linalg.norm(np.array(stop_sign_centroids[i]) - np.array(bus_centroid)) for i in range(len(stop_signs))]
+        qas = []
+        for rank, stop_sign_idx in enumerate(stop_sign_order):
+            question = self.question.format(stop_sign_number=rank + 1)
+            answer = "Yes" if stop_sign_distances[stop_sign_idx] < self.dist_threshold else "No"
+            qas.append((question, answer))
+
+        return qas
+    
+
+class PathBlockedBetweenObjects(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Number all objects in the image from left to right, starting with 1. "
+                "Objects include persons, benches, stop signs, buses, footballs, basketballs, giraffes, elephants, zebras, etc."
+                "Is the path between object number {object_1} and object number {object_2} blocked by any other object? "
+                "Do no consider the objects themselves as blocking. Respond with 'Yes' or 'No'."
+            ),
+            variables=["object_1", "object_2"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, [
+            "person", "bench", "stop sign", "bus", "football", "basketball", "giraffe", "elephant", "zebra"
+        ])
+        all_bboxes = []
+        for bboxes in labeled_bboxes.values():
+            all_bboxes.extend(bboxes)
+
+        if len(all_bboxes) < 2:
+            return [] # not enough objects detected
+
+        all_centroids = [centroid(bbox) for bbox in all_bboxes]
+        # sort objects left to right
+        object_order = sorted(range(len(all_bboxes)), key=lambda i: all_centroids[i][0])
+        object_num = {idx: num for num, idx in enumerate(object_order, start=1)}
+
+        qas = []
+        for i in range(len(object_order)):
+            for j in range(i + 1, len(object_order)):
+                obj1_idx = object_order[i]
+                obj2_idx = object_order[j]
+                question = self.question.format(
+                    object_1=object_num[obj1_idx],
+                    object_2=object_num[obj2_idx]
+                )
+                # check if any other object blocks the path
+                blocking = False
+                for k in range(len(all_bboxes)):
+                    if k == obj1_idx or k == obj2_idx:
+                        continue
+                    if check_path_blocked(all_bboxes[obj1_idx], all_bboxes[obj2_idx], all_bboxes[k]):
+                        blocking = True
+                        break
+                answer = "Yes" if blocking else "No"
+                qas.append((question, answer))
+
+        return qas
+
+
+class CanRobotPassBetweenObjects(Question):
+    def __init__(self, pass_width: float) -> None:
+        super().__init__(
+            question=(
+                "Number all objects in the image from left to right, starting with 1. "
+                "Objects include persons, benches, stop signs, giraffes, elephants, zebras."
+                "Can a robot of width {pass_width} units pass between object number {object_1} and object number {object_2} without colliding with them?"
+                "Respond with 'Yes' or 'No'."
+            ),
+            variables=["object_1", "object_2"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+        self.pass_width: float = pass_width
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, [
+            "person", "bench", "stop sign", "giraffe", "elephant", "zebra"
+        ])
+        all_bboxes = []
+        for bboxes in labeled_bboxes.values():
+            all_bboxes.extend(bboxes)
+
+        if len(all_bboxes) < 2:
+            return [] # not enough objects detected
+
+        all_centroids = [centroid(bbox) for bbox in all_bboxes]
+        # sort objects left to right
+        object_order = sorted(range(len(all_bboxes)), key=lambda i: all_centroids[i][0])
+        object_num = {idx: num for num, idx in enumerate(object_order, start=1)}
+
+        qas = []
+        for i in range(len(object_order)):
+            for j in range(i + 1, len(object_order)):
+                obj1_idx = object_order[i]
+                obj2_idx = object_order[j]
+                question = self.question.format(
+                    pass_width=self.pass_width,
+                    object_1=object_num[obj1_idx],
+                    object_2=object_num[obj2_idx]
+                )
+                # compute distance between objects
+                bbox1 = all_bboxes[obj1_idx]
+                bbox2 = all_bboxes[obj2_idx]
+                # add other coordinates
+                bbox1.append([[bbox1[0], bbox1[3]], [bbox1[2], bbox1[1]]])
+                bbox2.append([[bbox2[0], bbox2[3]], [bbox2[2], bbox2[1]]])
+                dists = [] # check all four edge combinations
+                for p1 in bbox1:
+                    for p2 in bbox2:
+                        dist = np.linalg.norm(np.array(p1) - np.array(p2))
+                        dists.append(dist)
+
+                answer = "Yes" if min(dists) >= self.pass_width else "No"
+                qas.append((question, answer))
+
+        return qas
+    
+
+class IsRobotBetweenObjects(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Number all objects in the image from left to right, starting with 1. "
+                "Objects include persons, benches, stop signs, giraffes, elephants, zebras."
+                "Is there a robot located between object number {object_1} and object number {object_2}?"
+                "Respond with 'Yes' or 'No'."
+            ),
+            variables=["object_1", "object_2"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, [
+            "person", "bench", "stop sign", "bus", "giraffe", "elephant", "zebra"
+        ])
+        if "bus" in labeled_bboxes:
+            # pop into bus_bbox
+            bus_bbox = labeled_bboxes.pop("bus")[0]
+        all_bboxes = []
+        for bboxes in labeled_bboxes.values():
+            all_bboxes.extend(bboxes)
+
+        if len(all_bboxes) < 2:
+            return [] # not enough objects detected
+
+        all_centroids = [centroid(bbox) for bbox in all_bboxes]
+        # sort objects left to right
+        object_order = sorted(range(len(all_bboxes)), key=lambda i: all_centroids[i][0])
+        object_num = {idx: num for num, idx in enumerate(object_order, start=1)}
+
+        qas = []
+        for i in range(len(object_order)):
+            for j in range(i + 1, len(object_order)):
+                obj1_idx = object_order[i]
+                obj2_idx = object_order[j]
+                question = self.question.format(
+                    object_1=object_num[obj1_idx],
+                    object_2=object_num[obj2_idx]
+                )
+                # check if bus object blocks the path
+                if bus_bbox is None:
+                    between = False
+                else:
+                    between = check_path_blocked(all_bboxes[obj1_idx], all_bboxes[obj2_idx], bus_bbox)
+                answer = "Yes" if between else "No"
+                qas.append((question, answer))
 
         return qas
 
