@@ -1,0 +1,27 @@
+-Start of dev log
+
+    -Now we are working on the control stack of the project
+    -I am going to move us back to using yolo as our main inference tool
+        -I am going to test using v8, but it should be simple to swap back to v11 or whatever
+        -Since we are renting out a gpu now, I am going to move our inference to the local gpu because in most cases it will be faster
+    -Local configs
+        -Cuda 13.1
+        -RTX 2060 gpu
+    
+
+
+    
+                    -====================== START OF RENTAL GPU ====================================-
+    -Here is the principal problem right now:
+        -Need to rent out gpu.
+        -All interfacing with the GPU is done through a docker container
+        -Our control stack exists in real life. and we NEED our prompts to include photos because this is a spatial reasoning project
+    -Here is my napkin solution:
+        -Create an API for the GPU, make it so that we can send photos through some sort of web service (we are looking at cloudflare or fastAPI)
+        -Here is what I think will be the most challenging process:
+            -Most APIs I am familiar with are a simple table look up in a database
+            -How do we send images through APIs from our source code? (Also are we going to have to save the images locally and on the cloud GPU?)
+            -We have to make some sort of handshake for the control stack so that it knows when we can start moving again (probably just going to do a while loop to busy wait it)
+                -this is particularly sticking out for me because of reason 1, Most APIs are near instant when it comes to the data, but we are literally prompting and running a VLM so the wait times are going to be crazy
+
+                
