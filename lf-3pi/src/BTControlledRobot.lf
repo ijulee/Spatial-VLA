@@ -3,7 +3,8 @@ target C {
         name: "rp2040",
         board: "pololu_3pi_2040_robot"
     },
-    single-threaded: true
+    keepalive: true,
+    threading: false
 }
 
 import Display from "lib/Display.lf"
@@ -13,11 +14,13 @@ import GyroAngle from "lib/IMU.lf"
 
 preamble {=
     #include <hardware/gpio.h>
+    #include <hardware/uart.h>
+    #include <hardware/irq.h>
     #include <pico/stdlib.h>
     #include <string.h>
     #include <stdlib.h>
+    #include <stdio.h>
 
-    #define SIGMOID(x) (1.0f/(1+exp(-x))-0.5f)
     #define GATE(a, x, b) (fmin(b, fmax(a, x)))
     #define MOVE_SPEED 0.04f
     #define TURN_SPEED 0.02f
@@ -465,36 +468,150 @@ reactor Robot(sample_period: time = 100 ms) {
 }
 
 reactor BTReceiver {
-    //input enable: bool
-    output command: string
-    
-    state count: int = 0
+    preamble {=
+        // Define the UART for the HC-05
+        #define UART_ID     uart0
+        #define BAUD_RATE   9600
+        #define DATA_BITS   8
+        #define STOP_BITS   1
+        #define PARITY      UART_PARITY_NONE
 
-    timer t(0, 100ms)
+        // Define UART pins
+        #define UART_TX_PIN 28
+        #define UART_RX_PIN 29
 
-    reaction(t) -> command {=
-        switch (self->count) {
-            case 10:
-            lf_set(command, "f5");
-            printf("sent command\n");
-            break;
+         // --- Ring Buffer for ISR-driven UART ---
+         #define RING_BUF_SIZE 256
+        volatile char uart_ring_buffer[RING_BUF_SIZE];
+        volatile uint ring_head = 0;
+        volatile uint ring_tail = 0;
 
-            case 50:
-            lf_set(command, "b10");
-            printf("sent command\n");
-            break;
+        // --- Line Buffer for Main Loop ---
+        #define LINE_BUF_SIZE 128
+        volatile char uart_line_buffer[LINE_BUF_SIZE];
+        volatile int line_idx = 0;
+        volatile bool line_ready = false;
 
-            case 100:
-            lf_set(command, "r20");
-            printf("sent command\n");
-            break;
+        // RX interrupt handler (ISR)
+        void on_uart_rx() {
+            while (uart_is_readable(UART_ID)) {
+                char ch = uart_getc(UART_ID);
 
-            case 120:
-            lf_set(command, "l10");
-            printf("sent command\n");
-            break;
+                // calculate next head position
+                uint next_head = (ring_head + 1) % RING_BUF_SIZE;
+
+                // check if buffer is full
+                if (next_head != ring_tail) {
+                    // not full, add char to buffer
+                    uart_ring_buffer[ring_head] = ch;
+                    ring_head = next_head;
+                }
+                // else buffer full, char dropped
+            }
         }
-        self->count++;
+
+        // initialize UART0 for the HC-05
+        void setup_uart() {
+            // initialize UART
+            uart_init(UART_ID, BAUD_RATE);
+
+            // set the TX and RX pins
+            gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+            gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+
+            // set format
+            uart_set_hw_flow(UART_ID, false, false);
+            uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
+
+            // turn off FIFO; char-by-char
+            uart_set_fifo_enabled(UART_ID, false);
+
+            // set up and enable RX interrupt
+            int UART_IRQ = (UART_ID == uart0) ? UART0_IRQ : UART1_IRQ;
+            irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
+            irq_set_enabled(UART_IRQ, true);
+
+            // enable UART to fire an interrupt when data received
+            uart_set_irq_enables(UART_ID, true, false);
+
+            printf("Bluetooth UART initialized at %d baud.\n", BAUD_RATE);
+        }
+
+        // send message to HC-05 (end with CRLF)
+        void setup_msg(const char* msg) {
+            printf("Sending: %s\n", msg);
+            uart_puts(UART_ID, msg);
+            uart_puts(UART_ID, "\r\n");
+        }
+    =}
+
+    state cur_state: char = 's';
+    state count: int = 0
+    
+    output command: string
+
+    timer poll_timer(0, 10 msec);
+
+    physical action cmd_received;
+
+    // regularly poll for chars from BT module
+    reaction(poll_timer) -> cmd_received {=
+        // do not process if main loop hasn't processed last line
+        if (line_ready) {
+            return;
+        }
+
+        // process characters from ring buffer
+        while (ring_tail != ring_head) {
+            char ch = uart_ring_buffer[ring_tail];
+            ring_tail = (ring_tail + 1) % RING_BUF_SIZE;
+
+            // handle bksp/del for basic terminal editing
+            if (ch == '\b' || ch == 127) {
+                if (line_idx > 0) {
+                    line_idx--;
+                }
+                continue; // don't add to buffer
+            }
+
+            // treat \n or \r as line end
+            if (ch == '\n' || ch == '\r') {
+                if (line_idx > 0) { // complete line
+                    uart_line_buffer[line_idx] = '\0'; // null terminate
+                    line_ready = true;
+                    line_idx = 0; // reset for next line
+                    
+                    // schedule physical action
+                    lf_schedule(cmd_received, 0);
+                    
+                    // stop processing chars for now
+                    break;
+                }
+                // else empty line, just ignore
+            } else {
+                // regular char
+                if (line_idx < LINE_BUF_SIZE - 1) {
+                    uart_line_buffer[line_idx++] = ch;
+                } else {
+                    // buffer overflow and reset.
+                    line_idx = 0;
+                }
+            }
+        }
+    =}
+
+    // triggered when a full line has been received
+    reaction(cmd_received) -> command {=
+        // read the line buffer
+        const char* cmd = (const char*) uart_line_buffer;
+
+        // print to USB serial output for debugging
+        printf("Command Received: '%s'\n", cmd);
+
+        lf_set(command, cmd);
+
+        // clear line_ready flag after processing
+        line_ready = false; 
     =}
 }
 
@@ -510,5 +627,4 @@ main reactor {
     robot.notify2 -> display.line2
     robot.notify3 -> display.line3
 
-    // rcvr.command -> display.line3
 }
