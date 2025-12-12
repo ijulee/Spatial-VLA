@@ -40,7 +40,7 @@ async def load_model():
     model = MllamaForConditionalGeneration.from_pretrained(
         model_id,
         torch_dtype=torch.bfloat16,
-        device_map="auto",
+        device_map="cuda",
         # token=token  # Pass token explicitly
     )
     processor = AutoProcessor.from_pretrained(model_id)

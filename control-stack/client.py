@@ -25,15 +25,15 @@ if img is not None:
         # try:
         payload = {
             "image": img_b64,
-            "prompt": "How many men are there",
-            "max_tokens": 50,
+            "prompt": "How many men are there , just give us a number ONLY",
+            "max_tokens": 10,
             "temperature": 0.7
         }
         # print(payload["image"])
         response = requests.post(
             f"{SERVER_URL}/inference",
-            json=payload,
-            timeout=30
+            json=payload
+            # timeout=30
         )
         print(response.json())
         
