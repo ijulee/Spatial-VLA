@@ -16,7 +16,6 @@ img_path_test = "C:/Users/randy/Desktop/Spatial-VLA/Photos/Lab_photo.jpg"
 
 img = cv2.imread(img_path_test,cv2.IMREAD_COLOR)
 
-
 if img is not None:
     sucess,buffer = cv2.imencode('.jpg',img)
 
