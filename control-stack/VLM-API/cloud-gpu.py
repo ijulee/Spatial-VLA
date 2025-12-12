@@ -25,25 +25,25 @@ async def load_model():
     model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     
     # Use the HF token for authentication
-    from huggingface_hub import login
-    token = os.environ.get('HF_TOKEN')
+    # from huggingface_hub import login
+    # token = os.environ.get('HF_TOKEN')
     
-    if not token or token == 'hf_your_token_here':
-        print("❌ ERROR: No valid HF_TOKEN set!")
-        print("Get your token from: https://huggingface.co/settings/tokens")
-        print("Then set it in the code or as environment variable")
-        return
+    # if not token or token == 'hf_your_token_here':
+    #     print("❌ ERROR: No valid HF_TOKEN set!")
+    #     print("Get your token from: https://huggingface.co/settings/tokens")
+    #     print("Then set it in the code or as environment variable")
+    #     return
     
-    print("🔑 Logging into Hugging Face...")
-    login(token=token)
+    # print("🔑 Logging into Hugging Face...")
+    # login(token=token)
     
     model = MllamaForConditionalGeneration.from_pretrained(
         model_id,
         torch_dtype=torch.bfloat16,
         device_map="auto",
-        token=token  # Pass token explicitly
+        # token=token  # Pass token explicitly
     )
-    processor = AutoProcessor.from_pretrained(model_id, token=token)
+    processor = AutoProcessor.from_pretrained(model_id)
     
     print("✅ Model loaded and ready!")
 
