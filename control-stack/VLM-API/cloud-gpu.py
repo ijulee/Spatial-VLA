@@ -32,8 +32,7 @@ async def load_model():
     model = MllamaForConditionalGeneration.from_pretrained(
         model_id,
         torch_dtype=torch.bfloat16,
-        device_map="auto",
-        padding=True
+        device_map="auto"
     )
     processor = AutoProcessor.from_pretrained(model_id)
     
@@ -92,24 +91,25 @@ async def run_inference(request: InferenceRequest):
         )
         
         inputs = processor(
-            images=pil_image,
-            text=input_text,
+            pil_image,
+            input_text,
             return_tensors="pt",
-            padding=True
+            padding=True,
+            skip_special_tokens=True
         ).to(model.device)
         
         # Run inference
         print("🧠 Running VLM inference...")
-        with torch.no_grad():
-            output = model.generate(
-                **inputs,
-                max_new_tokens=request.max_tokens,
-                temperature=request.temperature,
-                do_sample=True
-            )
+        # with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_new_tokens=request.max_tokens,
+            temperature=request.temperature,
+            do_sample=True
+        )
         
         # Decode output
-        generated_text = processor.decode(output[0], skip_special_tokens=True)
+        generated_text = processor.decode(output[0])
         response_text = generated_text.split("assistant")[-1].strip()
         
         print(f"✅ Response: {response_text[:100]}...")
