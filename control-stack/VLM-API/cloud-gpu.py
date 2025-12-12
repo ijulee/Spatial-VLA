@@ -74,7 +74,7 @@ def base64_to_opencv(base64_string: str) -> np.ndarray:
 async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
-        print(f"📸 Received inference request: {request.prompt[:50]}...")
+        print(f"📸 Received inference request: {request.prompt}...")
         
         # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
