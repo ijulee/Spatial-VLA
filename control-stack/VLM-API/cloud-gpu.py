@@ -79,7 +79,7 @@ async def run_inference(request: InferenceRequest):
         # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        
+        print(img_rgb.shape)
         # Convert to PIL Image (what the processor expects)
         from PIL import Image
         pil_image = Image.fromarray(img_rgb)
