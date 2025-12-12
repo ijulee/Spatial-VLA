@@ -53,6 +53,10 @@ reactor Robot(sample_period: time = 100 ms) {
     state startDistL: float
     state startDistR: float
 
+    state direction: int = 1;
+    state speed: int = 0;
+    state goal: int = 0;
+
     output notify0: string
     output notify1: string
     output notify2: string
@@ -93,13 +97,49 @@ reactor Robot(sample_period: time = 100 ms) {
         self->nextCommand = command->value;
     =}
 
-    initial mode STOP {
+    initial mode DRIVE {
+        reaction(get_command, gyro.z, dist.left, dist.right) -> reset(TURN) {=
+            if (strcmp(self->nextCommand, "") == 0) {
+                return;
+            }
+
+            // print command to serial output for debugging
+            printf("command: %s\n", self->nextCommand);
+
+            // parse command
+            const string delim = ",";
+            string token;
+            string endstr;
+
+            // mode: char
+            token = strtok(self->nextCommand, delim);
+            char cmd_mode = token[0];
+
+            // speed: integer
+            token = strtok(NULL, delim);
+            int cmd_speed = strtol(token, &endstr, 10);
+
+            // goal: integer
+            token = strtok(NULL, delim);
+            int cmd_goal = strtol(token, &endstr, 10);
+
+            printf("parsed command: mode %c, speed %d, goal %d", cmd_mode, cmd_speed, cmd_goal);
+        =}
+
+
+    }
+
+    mode TURN {
+
+    }
+
+    mode STOP {
         reaction(get_command, gyro.z, dist.left, dist.right) ->
             reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
             
             if (strcmp(self->nextCommand, "") == 0) {
                 return;
-            } 
+            }
 
             printf("command: %s\n", self->nextCommand);
 
