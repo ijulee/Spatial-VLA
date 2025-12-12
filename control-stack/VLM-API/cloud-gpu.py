@@ -1,9 +1,3 @@
-# gpu_server.py - Run this on RunPod
-# This IS your web server - FastAPI handles all HTTP/networking
-
-import os
-
-# Set Hugging Face cache to /workspace BEFORE importing transformers
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -26,17 +20,32 @@ processor = None
 async def load_model():
     """Load model when server starts (runs once)"""
     global model, processor
-
+    print("🚀 Loading Llama 3.2 11B Vision...")
+    
     model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    
+    # Use the HF token for authentication
+    from huggingface_hub import login
+    token = os.environ.get('HF_TOKEN')
+    
+    if not token or token == 'hf_your_token_here':
+        print("❌ ERROR: No valid HF_TOKEN set!")
+        print("Get your token from: https://huggingface.co/settings/tokens")
+        print("Then set it in the code or as environment variable")
+        return
+    
+    print("🔑 Logging into Hugging Face...")
+    login(token=token)
     
     model = MllamaForConditionalGeneration.from_pretrained(
         model_id,
         torch_dtype=torch.bfloat16,
-        device_map="auto"
+        device_map="auto",
+        token=token  # Pass token explicitly
     )
-    processor = AutoProcessor.from_pretrained(model_id)
+    processor = AutoProcessor.from_pretrained(model_id, token=token)
     
-
+    print("✅ Model loaded and ready!")
 
 # Request/Response formats
 class InferenceRequest(BaseModel):
@@ -66,48 +75,64 @@ async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
         print(f"📸 Received inference request: {request.prompt[:50]}...")
-        print(request.image)
+        
         # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         
         # Convert to PIL Image (what the processor expects)
-
+        from PIL import Image
         pil_image = Image.fromarray(img_rgb)
         
-        # Prepare for Llama 3.2 Vision
+        # Prepare messages for Llama 3.2 Vision
         messages = [
-            {"role": "user", "content": [
-                {"type": "image"},
-                {"type": "text", "text": request.prompt}
-            ]}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": request.prompt}
+                ]
+            }
         ]
         
+        # Apply chat template to get the formatted prompt
         input_text = processor.apply_chat_template(
-            messages, add_generation_prompt=True
+            messages, 
+            add_generation_prompt=True
         )
         
+        print("🧠 Running VLM inference...")
+        
+        # Process image and text separately, then combine
         inputs = processor(
-            pil_image,
-            input_text,
+            text=input_text,
+            images=pil_image,
             return_tensors="pt",
             padding=True
-        ).to(model.device)
-        
-        # Run inference
-        print("🧠 Running VLM inference...")
-        # with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=request.max_tokens,
-            temperature=request.temperature,
-            do_sample=True
         )
         
+        # Move inputs to GPU
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        
+        # Run inference
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=request.max_tokens,
+                temperature=request.temperature,
+                do_sample=True if request.temperature > 0 else False
+            )
+        
         # Decode output
-
-        generated_text = processor.decode(output[0],skip_special_tokens=True)
-        response_text = generated_text.split("assistant")[-1].strip()
+        generated_text = processor.decode(output[0], skip_special_tokens=True)
+        
+        # Extract only the assistant's response (remove prompt)
+        # The response usually comes after "assistant" or similar marker
+        if "assistant" in generated_text.lower():
+            response_text = generated_text.split("assistant")[-1].strip()
+        else:
+            # Fallback: just remove the input prompt
+            response_text = generated_text.replace(input_text, "").strip()
         
         print(f"✅ Response: {response_text[:100]}...")
         
@@ -117,7 +142,10 @@ async def run_inference(request: InferenceRequest):
         )
         
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         print(f"❌ Error: {str(e)}")
+        print(f"📋 Full traceback:\n{error_details}")
         return InferenceResponse(
             success=False,
             error=str(e)
