@@ -105,8 +105,8 @@ async def run_inference(request: InferenceRequest):
         
         # Process image and text separately, then combine
         inputs = processor(
+            pil_image,
             text=input_text,
-            image=pil_image,
             return_tensors="pt",
             padding=True
         )
