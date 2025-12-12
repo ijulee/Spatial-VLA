@@ -1,11 +1,18 @@
 # gpu_server.py - Run this on RunPod
 # This IS your web server - FastAPI handles all HTTP/networking
 
+import os
+
+# Set Hugging Face cache to /workspace BEFORE importing transformers
+os.environ['HF_HOME'] = '/workspace/huggingface_cache'
+os.environ['TRANSFORMERS_CACHE'] = '/workspace/huggingface_cache'
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import base64
 import numpy as np
 import cv2
+from PIL import Image
 from typing import Optional
 import torch
 from transformers import MllamaForConditionalGeneration, AutoProcessor
@@ -21,6 +28,7 @@ processor = None
 async def load_model():
     """Load model when server starts (runs once)"""
     global model, processor
+    print("🚀 Loading Llama 3.2 11B Vision...")
     
     model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     
@@ -31,6 +39,7 @@ async def load_model():
     )
     processor = AutoProcessor.from_pretrained(model_id)
     
+    print("✅ Model loaded and ready!")
 
 # Request/Response formats
 class InferenceRequest(BaseModel):
@@ -59,11 +68,15 @@ def base64_to_opencv(base64_string: str) -> np.ndarray:
 async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
-        # print(f"Received inference request: {request.prompt[:50]}...")
+        print(f"📸 Received inference request: {request.prompt[:50]}...")
         
-        # Decode base64 -> OpenCV -> RGB
+        # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        
+        # Convert to PIL Image (what the processor expects)
+        from PIL import Image
+        pil_image = Image.fromarray(img_rgb)
         
         # Prepare for Llama 3.2 Vision
         messages = [
@@ -81,12 +94,14 @@ async def run_inference(request: InferenceRequest):
         )
         
         inputs = processor(
-            images=img_rgb,
+            images=pil_image,
             text=input_text,
-            return_tensors="pt"
+            return_tensors="pt",
+            padding=True
         ).to(model.device)
         
         # Run inference
+        print("🧠 Running VLM inference...")
         with torch.no_grad():
             output = model.generate(
                 **inputs,
@@ -99,6 +114,7 @@ async def run_inference(request: InferenceRequest):
         generated_text = processor.decode(output[0], skip_special_tokens=True)
         response_text = generated_text.split("assistant")[-1].strip()
         
+        print(f"✅ Response: {response_text[:100]}...")
         
         return InferenceResponse(
             success=True,
@@ -106,7 +122,7 @@ async def run_inference(request: InferenceRequest):
         )
         
     except Exception as e:
-        print(f" Error: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         return InferenceResponse(
             success=False,
             error=str(e)
