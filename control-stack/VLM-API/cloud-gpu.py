@@ -108,7 +108,7 @@ async def run_inference(request: InferenceRequest):
             text=input_text,
             image=pil_image,
             return_tensors="pt"
-            # padding=True
+            padding=True
         )
         
         # Move inputs to GPU
