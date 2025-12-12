@@ -107,7 +107,7 @@ async def run_inference(request: InferenceRequest):
         inputs = processor(
             text=input_text,
             image=pil_image,
-            return_tensors="pt"
+            return_tensors="pt",
             padding=True
         )
         
