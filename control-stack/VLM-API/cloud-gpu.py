@@ -106,9 +106,9 @@ async def run_inference(request: InferenceRequest):
         # Process image and text separately, then combine
         inputs = processor(
             text=input_text,
-            image=img_rgb,
-            return_tensors="pt",
-            padding=True
+            image=pil_image,
+            return_tensors="pt"
+            # padding=True
         )
         
         # Move inputs to GPU
