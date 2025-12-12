@@ -4,8 +4,6 @@
 import os
 
 # Set Hugging Face cache to /workspace BEFORE importing transformers
-os.environ['HF_HOME'] = '/workspace/huggingface_cache'
-os.environ['TRANSFORMERS_CACHE'] = '/workspace/huggingface_cache'
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -28,8 +26,7 @@ processor = None
 async def load_model():
     """Load model when server starts (runs once)"""
     global model, processor
-    print("🚀 Loading Llama 3.2 11B Vision...")
-    
+
     model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     
     model = MllamaForConditionalGeneration.from_pretrained(
@@ -39,7 +36,7 @@ async def load_model():
     )
     processor = AutoProcessor.from_pretrained(model_id)
     
-    print("✅ Model loaded and ready!")
+
 
 # Request/Response formats
 class InferenceRequest(BaseModel):
