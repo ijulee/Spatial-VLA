@@ -66,24 +66,21 @@ async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
         print(f"📸 Received inference request: {request.prompt[:50]}...")
-        
+        print(request.image)
         # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         
         # Convert to PIL Image (what the processor expects)
-        from PIL import Image
+
         pil_image = Image.fromarray(img_rgb)
         
         # Prepare for Llama 3.2 Vision
         messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": request.prompt}
-                ]
-            }
+            {"role": "user", "content": [
+                {"type": "image"},
+                {"type": "text", "text": request.prompt}
+            ]}
         ]
         
         input_text = processor.apply_chat_template(
@@ -94,8 +91,7 @@ async def run_inference(request: InferenceRequest):
             pil_image,
             input_text,
             return_tensors="pt",
-            padding=True,
-            skip_special_tokens=True
+            padding=True
         ).to(model.device)
         
         # Run inference
@@ -109,7 +105,8 @@ async def run_inference(request: InferenceRequest):
         )
         
         # Decode output
-        generated_text = processor.decode(output[0])
+
+        generated_text = processor.decode(output[0],skip_special_tokens=True)
         response_text = generated_text.split("assistant")[-1].strip()
         
         print(f"✅ Response: {response_text[:100]}...")

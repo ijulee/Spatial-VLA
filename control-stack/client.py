@@ -30,6 +30,7 @@ if img is not None:
             "max_tokens": 50,
             "temperature": 0.7
         }
+        # print(payload["image"])
         response = requests.post(
             f"{SERVER_URL}/inference",
             json=payload,
