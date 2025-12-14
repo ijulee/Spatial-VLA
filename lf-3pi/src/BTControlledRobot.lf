@@ -40,7 +40,7 @@ reactor EncoderDist {
     =}
   }
 
-reactor Robot(sample_period: time = 100 ms) {
+reactor Robot(sample_period: time = 50 ms) {
     preamble {=
         #define GATE(a, x, b) (fmin(b, fmax(a, x)))
         #define DRIVE_SPEED 0.04f
