@@ -20,10 +20,6 @@ preamble {=
     #include <string.h>
     #include <stdlib.h>
     #include <stdio.h>
-
-    #define GATE(a, x, b) (fmin(b, fmax(a, x)))
-    #define MOVE_SPEED 0.04f
-    #define TURN_SPEED 0.02f
 =}
 
 reactor EncoderDist {
@@ -45,13 +41,28 @@ reactor EncoderDist {
   }
 
 reactor Robot(sample_period: time = 100 ms) {
-    input command: string
+    preamble {=
+        #define GATE(a, x, b) (fmin(b, fmax(a, x)))
+        #define DRIVE_SPEED 0.04f
+        #define TURN_SPEED  0.02f
+        #define DRIVE_K1    0.001f
+        #define DRIVE_K2   -0.002f
+        #define TURN_K      0.0005f
+        #define DELIM ","
+    =}
 
-    state nextCommand: string = "";
-    state speedMulti: float = 1;
-    state startAngle: float
-    state startDistL: float
-    state startDistR: float
+    input command: string
+ 
+    state start_angle: float = 0
+    state cur_angle: float
+ 
+    state start_dist_L: float = 0
+    state start_dist_R: float = 0
+    state cur_dist_L: float
+    state cur_dist_R: float
+ 
+    state reset_angle: bool = true
+    state reset_dist: bool = true
 
     state direction: int = 1;
     state speed: int = 0;
@@ -68,8 +79,11 @@ reactor Robot(sample_period: time = 100 ms) {
     gyro = new GyroAngle();
 
     // sensor polling timer
-    timer sampling(0, sample_period);
-    timer get_command(0, 200 ms);
+    timer sample(0, sample_period);
+
+    // speed update timer 
+    // nominally same period as sensor
+    timer update(0, sample_period);
 
     // encoder to distance
     encoder.left -> dist.angle_left;
@@ -80,429 +94,193 @@ reactor Robot(sample_period: time = 100 ms) {
     encoder.right -> motor.right;
 
     reaction (startup) -> notify0 {=
-      self->startAngle = 0.0f;
-      self->startDistL = 0.0f;
-      self->startDistR = 0.0f;
+      
     =}
 
-    reaction (sampling) -> encoder.trigger, gyro.trigger {=
+    reaction (sample) -> encoder.trigger, gyro.trigger {=
         // update distance
         lf_set(encoder.trigger, true);
-
+        
         // update angle
         lf_set(gyro.trigger, true);
     =}
 
-    reaction (command) -> notify0 {=
-        self->nextCommand = command->value;
+    reaction (gyro.z) {=
+        if (self->reset_angle) {
+            self->reset_angle = false;
+            self->start_angle = gyro.z->value;
+            self->cur_angle = 0;
+        } else {
+            self->cur_angle = gyro.z->value - self->start_angle;
+        }
+    =}
+
+    reaction (dist.left, dist.right) {=
+        if (self->reset_dist) {
+            self->reset_dist = false;
+            self->start_dist_L = dist.left->value;
+            self->start_dist_R = dist.right->value;
+            self->cur_dist_L = 0;
+            self->cur_dist_R = 0;
+        } else {
+            self->cur_dist_L = dist.left->value - self->start_dist_L;
+            self->cur_dist_R = dist.right->value - self->start_dist_R;
+        }
     =}
 
     initial mode DRIVE {
-        reaction(get_command, gyro.z, dist.left, dist.right) -> reset(TURN) {=
-            if (strcmp(self->nextCommand, "") == 0) {
+        reaction(command) -> reset(TURN) {=
+            if (strcmp(command->value, "") == 0) {
                 return;
             }
 
             // print command to serial output for debugging
-            printf("command: %s\n", self->nextCommand);
+            printf("command: %s\n", command->value);
 
             // parse command
-            const string delim = ",";
             string token;
-            string endstr;
 
             // mode: char
-            token = strtok(self->nextCommand, delim);
+            token = strtok(command->value, DELIM);
             char cmd_mode = token[0];
 
             // speed: integer
-            token = strtok(NULL, delim);
-            int cmd_speed = strtol(token, &endstr, 10);
+            token = strtok(NULL, DELIM);
+            self->speed = strtol(token, NULL, 10);
 
             // goal: integer
-            token = strtok(NULL, delim);
-            int cmd_goal = strtol(token, &endstr, 10);
+            token = strtok(NULL, DELIM);
+            self->goal = strtol(token, NULL, 10);
 
-            printf("parsed command: mode %c, speed %d, goal %d", cmd_mode, cmd_speed, cmd_goal);
+            printf("parsed command: mode %c, speed %d, goal %d", cmd_mode, self->speed, self->goal);
+
+            switch (cmd_mode) {
+                case 'f':
+                self->direction = 1;
+                break;
+                
+                case 'b':
+                self->direction = -1;
+                break;
+                
+                case 'l':
+                self->direction = 1;
+                lf_set_mode(TURN);
+                break;
+
+                case 'r':
+                self->direction = -1;
+                lf_set_mode(TURN);
+                break;
+
+                case 's': // just stop if command not recognized
+                default:
+                self->speed = 0;
+                break;
+            }
+
+            self->reset_angle = true;
+            self->reset_dist = true;
         =}
 
+        reaction(update) -> motor.left_speed, motor.right_speed {=
+            // stop if goal distance reached
+            if ( (self->cur_dist_L * self->direction) 
+                    >= self->goal ) {
+                self->speed = 0;
+            }
 
+            // We're going straight as long as angle turned and left/right speed 
+            // difference are both close to 0. Angle is proportional to difference 
+            // in left/right distances, so it's basically a PI controller
+            float speed_diff = motor.left_speed->value - motor.right_speed->value;
+            float speed_cap = self->speed * DRIVE_SPEED;
+
+            float factor = (self->cur_angle * DRIVE_K1) + (speed_diff * DRIVE_K2);
+
+            float new_left = GATE(0, speed_cap + factor, 2*speed_cap);
+            float new_right = GATE(0, speed_cap - factor, 2*speed_cap);
+
+            lf_set(motor.left_speed, self->direction * new_left);
+            lf_set(motor.right_speed, self->direction * new_right);
+        =}
     }
 
     mode TURN {
-
-    }
-
-    mode STOP {
-        reaction(get_command, gyro.z, dist.left, dist.right) ->
-            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
-            
-            if (strcmp(self->nextCommand, "") == 0) {
+        reaction(command) -> reset(DRIVE) {=
+            if (strcmp(command->value, "") == 0) {
                 return;
             }
 
-            printf("command: %s\n", self->nextCommand);
+            // print command to serial output for debugging
+            printf("command: %s\n", command->value);
 
-            switch (self->nextCommand[0]) {
+            // parse command
+            string token;
+
+            // mode: char
+            token = strtok(command->value, DELIM);
+            char cmd_mode = token[0];
+
+            // speed: integer
+            token = strtok(NULL, DELIM);
+            self->speed = strtol(token, NULL, 10);
+
+            // goal: integer
+            token = strtok(NULL, DELIM);
+            self->goal = strtol(token, NULL, 10);
+
+            printf("parsed command: mode %c, speed %d, goal %d", cmd_mode, self->speed, self->goal);
+
+            switch (cmd_mode) {
                 case 'f':
-                lf_set_mode(FORWARD);
+                self->direction = 1;
+                lf_set_mode(DRIVE);
                 break;
                 
                 case 'b':
-                lf_set_mode(BACK);
+                self->direction = -1;
+                lf_set_mode(DRIVE);
                 break;
                 
                 case 'l':
-                lf_set_mode(LEFT);
+                self->direction = 1;
                 break;
 
                 case 'r':
-                lf_set_mode(RIGHT);
+                self->direction = -1;
                 break;
 
-                case 's':
-                lf_set_mode(STOP);
+                case 's': 
+                default: // just stop if command not recognized
+                self->speed = 0;
                 break;
-
-                default:
-                return;
             }
 
-            string cmdParameter = (self->nextCommand+1);
-            char* endptr;
-            long num = strtol(cmdParameter, &endptr, 10);
-            self->speedMulti = (int) num;
-
-            printf("multiplier: %d\n", self->speedMulti);
-
-            self->startAngle = gyro.z->value;
-            self->startDistL = dist.left->value;
-            self->startDistR = dist.right->value;
-
-            self->nextCommand = "";
+            self->reset_angle = true;
+            self->reset_dist = true;
         =}
 
-        reaction(gyro.z, dist.left, dist.right) {=
-            self->startAngle = gyro.z->value;
-            self->startDistL = dist.left->value;
-            self->startDistR = dist.right->value;
-        
-        =}
-    }
+        reaction(update) -> reset(DRIVE), motor.left_speed, motor.right_speed {=
+            // stop if goal distance reached
+            if ( (self->cur_angle * self->direction) 
+                    >= self->goal ) {
+                self->speed = 0;
 
-    mode FORWARD {
-
-        reaction(gyro.z) -> notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-            /* The change in heading is proportional to the difference in distance traveled
-            * between left and right wheel, which is integral of each wheel's speed.
-            */
-            float angleTurned = gyro.z->value - self->startAngle;
-            float speedDiff = motor.left_speed->value - motor.right_speed->value;
-
-            float factor = speedDiff * -0.002f + angleTurned * 0.001f;
-            float newLeft = MOVE_SPEED + GATE(-MOVE_SPEED, factor, MOVE_SPEED);
-            float newRight = MOVE_SPEED - GATE(-MOVE_SPEED, factor, MOVE_SPEED);
-            lf_set(motor.left_speed, newLeft*self->speedMulti);
-            lf_set(motor.right_speed, newRight*self->speedMulti);
-
-            static char buf1[17], buf2[17], buf3[17];
-            snprintf(buf3, 17, "z: %.1f", gyro.z->value);
-            lf_set(notify3, buf3);
-            snprintf(buf2, 17, "L: %.3f", newLeft*self->speedMulti);
-            lf_set(notify2, buf2);
-            snprintf(buf1, 17, "R: %.3f", newRight*self->speedMulti);
-            lf_set(notify1, buf1);
-        =}
-
-        reaction(dist.left, dist.right) -> notify1, notify2 {=
-            float distMovedL = dist.left->value - self->startDistL;
-            float distMovedR = dist.right->value - self->startDistR;
-        =}
-
-        reaction(get_command, gyro.z, dist.left, dist.right) ->
-            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
-
-            if (strcmp(self->nextCommand, "") == 0) {
-                return;
-            } 
-
-            printf("command: %s\n", self->nextCommand);
-
-            switch (self->nextCommand[0]) {
-                case 'f':
-                lf_set_mode(FORWARD);
-                break;
-                
-                case 'b':
-                lf_set_mode(BACK);
-                break;
-                
-                case 'l':
-                lf_set_mode(LEFT);
-                break;
-
-                case 'r':
-                lf_set_mode(RIGHT);
-                break;
-
-                case 's':
-                lf_set_mode(STOP);
-                break;
-
-                default:
-                return;
             }
 
-            string cmdParameter = (self->nextCommand+1);
-            char* endptr;
-            long num = strtol(cmdParameter, &endptr, 10);
+            // We're trying to keep the robot stationary as it turns, so 
+            // the difference between left/right distances should be 0;
+            float speed_diff = motor.left_speed->value - motor.right_speed->value;
+            float speed_cap = self->speed * TURN_SPEED;
 
-            self->speedMulti = (int) num;
-            
-            self->startAngle = gyro.z->value;
-            self->startDistL = dist.left->value;
-            self->startDistR = dist.right->value;
-            
-            printf("multiplier: %d\n", self->speedMulti);
+            float factor = (self->cur_dist_L + self->cur_dist_R) * 0.0005f;
 
-            self->nextCommand = "";
-        =}
-    }
+            float new_left = -GATE(0, speed_cap + factor, 2*speed_cap);
+            float new_right = GATE(0, speed_cap + factor, 2*speed_cap);
 
-    mode BACK {
-
-        reaction(gyro.z) -> notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-            /* The change in heading is proportional to the difference in distance traveled
-            * between left and right wheel, which is integral of each wheel's speed.
-            */
-            float angleTurned = gyro.z->value - self->startAngle;
-            float speedDiff = motor.left_speed->value - motor.right_speed->value;
-
-            float factor = speedDiff * -0.002f + angleTurned * 0.001f;
-            float newLeft = -MOVE_SPEED + GATE(-MOVE_SPEED, factor, MOVE_SPEED);
-            float newRight = -MOVE_SPEED - GATE(-MOVE_SPEED, factor, MOVE_SPEED);
-            lf_set(motor.left_speed, newLeft*self->speedMulti);
-            lf_set(motor.right_speed, newRight*self->speedMulti);
-
-            static char buf1[17], buf2[17], buf3[17];
-            snprintf(buf3, 17, "z: %.1f", gyro.z->value);
-            lf_set(notify3, buf3);
-            snprintf(buf2, 17, "L: %.3f", newLeft*self->speedMulti);
-            lf_set(notify2, buf2);
-            snprintf(buf1, 17, "R: %.3f", newRight*self->speedMulti);
-            lf_set(notify1, buf1);
-        =}
-
-        reaction(dist.left, dist.right) -> notify1, notify2 {=
-            float distMovedL = dist.left->value - self->startDistL;
-            float distMovedR = dist.right->value - self->startDistR;
-        =}
-
-        reaction(get_command, gyro.z, dist.left, dist.right) ->
-            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
-            
-            if (strcmp(self->nextCommand, "") == 0) {
-                return;
-            } 
-
-            printf("command: %s\n", self->nextCommand);
-
-            switch (self->nextCommand[0]) {
-                case 'f':
-                lf_set_mode(FORWARD);
-                break;
-                
-                case 'b':
-                lf_set_mode(BACK);
-                break;
-                
-                case 'l':
-                lf_set_mode(LEFT);
-                break;
-
-                case 'r':
-                lf_set_mode(RIGHT);
-                break;
-
-                case 's':
-                lf_set_mode(STOP);
-                break;
-
-                default:
-                return;
-            }
-
-            string cmdParameter = (self->nextCommand+1);
-            char* endptr;
-            long num = strtol(cmdParameter, &endptr, 10);
-            
-            self->speedMulti = (int) num;
-            
-            self->startAngle = gyro.z->value;
-            self->startDistL = dist.left->value;
-            self->startDistR = dist.right->value;
-
-            printf("multiplier: %d\n", self->speedMulti);
-
-            self->nextCommand = "";
-        =}
-    }
-
-    mode LEFT {
-
-        reaction(gyro.z) -> notify3 {=
-            float angleTurned = gyro.z->value - self->startAngle;
-        =}
-
-        reaction(dist.left, dist.right) -> 
-            notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-            
-            float distMovedL = dist.left->value - self->startDistL;
-            float distMovedR = dist.right->value - self->startDistR;
-            float factor = (distMovedL+distMovedR) * 0.0005f;
-            float newLeft = -(TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
-            float newRight = (TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
-
-            static char buf1[17], buf2[17], buf3[17];
-            sprintf(buf1, "d: %3.2f", distMovedL+distMovedR);
-            sprintf(buf2, "L: %.3f", newLeft*self->speedMulti);
-            sprintf(buf3, "R: %.3f", newRight*self->speedMulti);
-            lf_set(notify3, buf1);
-            lf_set(notify1, buf2);
-            lf_set(notify2, buf3);
-
-
-            lf_set(motor.left_speed, newLeft*self->speedMulti);
-            lf_set(motor.right_speed, newRight*self->speedMulti);
-
-        =}
-
-        reaction(get_command, gyro.z, dist.left, dist.right) ->
-            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
-            
-            if (strcmp(self->nextCommand, "") == 0) {
-                return;
-            } 
-
-            printf("command: %s\n", self->nextCommand);
-
-            switch (self->nextCommand[0]) {
-                case 'f':
-                lf_set_mode(FORWARD);
-                break;
-                
-                case 'b':
-                lf_set_mode(BACK);
-                break;
-                
-                case 'l':
-                lf_set_mode(LEFT);
-                break;
-
-                case 'r':
-                lf_set_mode(RIGHT);
-                break;
-
-                case 's':
-                lf_set_mode(STOP);
-                break;
-
-                default:
-                return;
-            }
-
-            string cmdParameter = (self->nextCommand+1);
-            char* endptr;
-            long num = strtol(cmdParameter, &endptr, 10);
-            
-            self->speedMulti = (int) num;
-            
-            self->startAngle = gyro.z->value;
-            self->startDistL = dist.left->value;
-            self->startDistR = dist.right->value;
-
-            printf("multiplier: %d\n", self->speedMulti);
-
-            self->nextCommand = "";
-        =}
-    }
-
-    mode RIGHT {
-
-        reaction(gyro.z) -> notify3 {=
-            float angleTurned = gyro.z->value - self->startAngle;
-        =}
-
-        reaction(dist.left, dist.right) -> 
-            notify1, notify2, notify3, motor.left_speed, motor.right_speed {=
-            
-            float distMovedL = dist.left->value - self->startDistL;
-            float distMovedR = dist.right->value - self->startDistR;
-            float factor = (distMovedL+distMovedR) * 0.0005f;
-            float newLeft = (TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
-            float newRight = -(TURN_SPEED + GATE(-TURN_SPEED, factor, TURN_SPEED));
-
-            static char buf1[17], buf2[17], buf3[17];
-            sprintf(buf1, "d: %3.2f", distMovedL+distMovedR);
-            sprintf(buf2, "L: %.3f", newLeft*self->speedMulti);
-            sprintf(buf3, "R: %.3f", newRight*self->speedMulti);
-            lf_set(notify3, buf1);
-            lf_set(notify1, buf2);
-            lf_set(notify2, buf3);
-
-
-            lf_set(motor.left_speed, newLeft*self->speedMulti);
-            lf_set(motor.right_speed, newRight*self->speedMulti);
-
-        =}
-
-        reaction(get_command, gyro.z, dist.left, dist.right) ->
-            reset(FORWARD), reset(BACK), reset(RIGHT), reset(LEFT), reset(STOP) {=
-            
-            if (strcmp(self->nextCommand, "") == 0) {
-                return;
-            } 
-
-            printf("command: %s\n", self->nextCommand);
-
-            switch (self->nextCommand[0]) {
-                case 'f':
-                lf_set_mode(FORWARD);
-                break;
-                
-                case 'b':
-                lf_set_mode(BACK);
-                break;
-                
-                case 'l':
-                lf_set_mode(LEFT);
-                break;
-
-                case 'r':
-                lf_set_mode(RIGHT);
-                break;
-
-                case 's':
-                lf_set_mode(STOP);
-                break;
-
-                default:
-                return;
-            }
-
-            string cmdParameter = (self->nextCommand+1);
-            char* endptr;
-            long num = strtol(cmdParameter, &endptr, 10);
-            
-            self->speedMulti = (int) num;
-            
-            self->startAngle = gyro.z->value;
-            self->startDistL = dist.left->value;
-            self->startDistR = dist.right->value;
-            
-            printf("multiplier: %d\n", self->speedMulti);
-
-            self->nextCommand = "";
+            lf_set(motor.left_speed, self->direction * new_left);
+            lf_set(motor.right_speed, self->direction * new_right);
         =}
     }
 }
