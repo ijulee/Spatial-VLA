@@ -231,12 +231,14 @@ reactor Robot(sample_period: time = 50 ms) {
             // difference are both close to 0. Angle is proportional to difference 
             // in left/right distances, so it's basically a PI controller
             float speed_diff = motor.left_speed->value - motor.right_speed->value;
-            float speed_cap = self->speed * DRIVE_SPEED;
+            // slow down when approachhing goal
+            float dist_to_goal = self->goal - (self->cur_dist_L * self->direction);
+            float base_speed = self->speed * DRIVE_SPEED * (1.05f - exp(dist_to_goal));
 
             float factor = (self->cur_angle * DRIVE_K1) + (speed_diff * DRIVE_K2);
 
-            float new_left = GATE(0, speed_cap + factor, 2*speed_cap);
-            float new_right = GATE(0, speed_cap - factor, 2*speed_cap);
+            float new_left = GATE(0, base_speed + factor, 2*base_speed);
+            float new_right = GATE(0, base_speed - factor, 2*base_speed);
 
             lf_set(motor.left_speed, self->direction * new_left);
             lf_set(motor.right_speed, self->direction * new_right);
@@ -309,12 +311,14 @@ reactor Robot(sample_period: time = 50 ms) {
             // We're trying to keep the robot stationary as it turns, so 
             // the difference between left/right distances should be 0;
             float speed_diff = motor.left_speed->value - motor.right_speed->value;
-            float speed_cap = self->speed * TURN_SPEED;
+            float dist_to_goal = self->goal - (self->cur_angle * self->direction);
+            // slow down as we approach goal
+            float base_speed = self->speed * TURN_SPEED * (1.05f - exp(dist_to_goal));
 
             float factor = (self->cur_dist_L + self->cur_dist_R) * 0.0005f;
 
-            float new_left = -GATE(0, speed_cap + factor, 2*speed_cap);
-            float new_right = GATE(0, speed_cap + factor, 2*speed_cap);
+            float new_left = -GATE(0, base_speed + factor, 2*base_speed);
+            float new_right = GATE(0, base_speed + factor, 2*base_speed);
 
             lf_set(motor.left_speed, self->direction * new_left);
             lf_set(motor.right_speed, self->direction * new_right);
