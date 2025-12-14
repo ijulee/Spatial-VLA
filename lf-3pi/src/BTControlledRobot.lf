@@ -1,3 +1,40 @@
+
+/******************************************************************************
+ * Lingua Franca C program for the Pololu 3pi+ 2040. The robot receives text
+ * commands through the connected HC-05 Bluetooth module and moves accordingly.
+ * 
+ * by I-Jui Lee
+ *
+ * HC-05 Module Setup:
+ * 1. GP28 (UART0 TX) -> HC-05 RXD
+ * 2. GP29 (UART0 RX) -> HC-05 TXD
+ * 3. 3V3 (OUT)       -> HC-05 VCC
+ * 4. GND             -> HC-05 GND
+ *
+ * How to Use:
+ * 1. Connect the HC-05 as described above.
+ * 2. Compile and flash this program to the 3pi+ 2040 robot.
+ * 3. Disconnect THEN power on the robot 
+ *    (IMPORTANT, ensures BT module and the MCU are synced).
+ * 4. Robot should be ready to receive text commands through BT.
+ * 
+ * Command Format: "<MODE>,<SPEED>,<GOAL>" delimited by commas (',')
+ *
+ *   MODE
+ *   A single char to denote the type of movement: 'f'orward, 'b'ackward,
+ *   'l'eft turn, 'r'ight turn, 's'top. Robot will simply stop if command
+ *   isn't recognized.
+ *
+ *   SPEED
+ *   An unsigned integer indicating the speed multiplier. Base driving speed
+ *   is 0.04f, and turning speed is 0.02f.
+ *   
+ *   GOAL
+ *   An unsigned integer indicating the goal distance (cm) or angle (deg) when 
+ *   driving or turning, respecttively.
+ *
+ *****************************************************************************/
+
 target C {
     platform: {
         name: "rp2040",
