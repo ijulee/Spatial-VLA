@@ -120,7 +120,9 @@ reactor Robot(sample_period: time = 50 ms) {
         #define TURN_SPEED  0.02f
         #define DRIVE_K1    0.001f
         #define DRIVE_K2   -0.002f
-        #define TURN_K      0.0005f
+        #define DRIVE_TOL   0.5f
+        #define TURN_K      0.0001f
+        #define TURN_TOL    5.0f    
         #define DELIM ","
     =}
 
@@ -257,21 +259,21 @@ reactor Robot(sample_period: time = 50 ms) {
         =}
 
         reaction(update) -> motor.left_speed, motor.right_speed {=
+            float progress = self->cur_dist_L * self->direction;
+            
             // stop if goal distance reached
-            if ( (self->cur_dist_L * self->direction) 
-                    >= self->goal ) {
+            if ( fabs(progress - self->goal) < DRIVE_TOL ) {
                 self->speed = 0;
             }
+
+            float speed_diff = motor.left_speed->value - motor.right_speed->value;
+            float base_speed = self->speed * DRIVE_SPEED;
 
             // We're going straight as long as angle turned and left/right speed 
             // difference are both close to 0. Angle is proportional to difference 
             // in left/right distances, so it's basically a PI controller
-            float speed_diff = motor.left_speed->value - motor.right_speed->value;
-            // slow down when approachhing goal
-            float progress = self->cur_dist_L * self->direction;
-            float base_speed = self->speed * DRIVE_SPEED;
-
             float angle_factor = ((self->cur_angle * DRIVE_K1) + (speed_diff * DRIVE_K2)) * self->direction;
+            // Slow down when approachhing goal.
             float speed_factor = (0.1f + 0.9f * SIGMOID((progress - self->goal*3/4.0f)/4.0f));
 
             float new_left = GATE(0, base_speed * speed_factor + angle_factor, 2*base_speed);
@@ -340,22 +342,21 @@ reactor Robot(sample_period: time = 50 ms) {
         =}
 
         reaction(update) -> reset(DRIVE), motor.left_speed, motor.right_speed {=
+            float progress = self->cur_angle * self->direction;
+            
             // stop if goal distance reached
-            if ( (self->cur_angle * self->direction) 
-                    >= self->goal ) {
+            if ( fabs(progress - self->goal) < TURN_TOL ) {
                 self->speed = 0;
-
             }
 
-            // We're trying to keep the robot stationary as it turns, so 
-            // the difference between left/right distances should be 0;
             float speed_diff = motor.left_speed->value - motor.right_speed->value;
-            // slow down as we approach goal
-            float progress = self->cur_angle * self->direction;
             float base_speed = self->speed * TURN_SPEED;
 
-            float angle_factor = 0.1f + 0.9f * SIGMOID((progress - self->goal*3/4.0f)/5.0f);
-            float speed_factor = (self->cur_dist_L + self->cur_dist_R) * 0.0001f;
+            // Slow down as we approach goal.
+            float angle_factor = 0.1f + 0.9f * SIGMOID((progress - self->goal*3/4.0f)/4.0f);
+            // We're trying to keep the robot stationary as it turns, so 
+            // the difference between left/right distances should be 0
+            float speed_factor = (self->cur_dist_L + self->cur_dist_R) * TURN_K;
 
             float new_left = -GATE(0, base_speed * angle_factor - speed_factor, 2*base_speed);
             float new_right = GATE(0, base_speed * angle_factor - speed_factor, 2*base_speed);
