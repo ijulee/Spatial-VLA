@@ -75,11 +75,47 @@ reactor EncoderDist {
       lf_set(left, (angle_left->value/360.0f) * PI * DIA);
       lf_set(right, (angle_right->value/360.0f) * PI * DIA);
     =}
-  }
+}
+
+reactor GyroCalibrated {
+    preamble {=
+        #define DRIFT -0.655f // [DEG/S]
+    =}
+    // correcting for drift in gyroscope z-axis
+
+    input trigger: bool
+    input reset_measurement: bool
+    output cur_angle: float
+
+    state start_time: instant_t
+    state start_angle: float
+
+    gyro = new GyroAngle();
+
+    trigger -> gyro.trigger;
+
+    reaction(startup) {=
+        self->start_time = lf_time_physical();
+        self->start_angle = 0;
+    =}
+
+    reaction(reset_measurement) {=
+        self->start_time = lf_time_physical();
+        self->start_angle = 0;
+    =}
+
+    reaction(gyro.z) -> cur_angle {=
+        float angle = gyro.z->value;
+        interval_t time_elapsed = lf_time_physical() - self->start_time;
+        angle += DRIFT * time_elapsed / SEC(1);
+        lf_set(cur_angle, angle - self->start_angle);
+    =}
+}
 
 reactor Robot(sample_period: time = 50 ms) {
     preamble {=
-        #define GATE(a, x, b) (fmin(b, fmax(a, x)))
+        #define SIGMOID(t)      (1/(1+exp(t)))
+        #define GATE(a, x, b)   (fmin(b, fmax(a, x)))
         #define DRIVE_SPEED 0.04f
         #define TURN_SPEED  0.02f
         #define DRIVE_K1    0.001f
@@ -113,7 +149,7 @@ reactor Robot(sample_period: time = 50 ms) {
     motor = new MotorsWithFeedback();
     encoder = new Encoders();
     dist = new EncoderDist();
-    gyro = new GyroAngle();
+    gyro = new GyroCalibrated();
 
     // sensor polling timer
     timer sample(0, sample_period);
@@ -142,13 +178,13 @@ reactor Robot(sample_period: time = 50 ms) {
         lf_set(gyro.trigger, true);
     =}
 
-    reaction (gyro.z) {=
+    reaction (gyro.cur_angle) {=
         if (self->reset_angle) {
             self->reset_angle = false;
-            self->start_angle = gyro.z->value;
+            self->start_angle = gyro.cur_angle->value;
             self->cur_angle = 0;
         } else {
-            self->cur_angle = gyro.z->value - self->start_angle;
+            self->cur_angle = gyro.cur_angle->value - self->start_angle;
         }
     =}
 
@@ -189,7 +225,7 @@ reactor Robot(sample_period: time = 50 ms) {
             token = strtok(NULL, DELIM);
             self->goal = strtol(token, NULL, 10);
 
-            printf("parsed command: mode %c, speed %d, goal %d", cmd_mode, self->speed, self->goal);
+            printf("parsed command: mode %c, speed %d, goal %d\n", cmd_mode, self->speed, self->goal);
 
             switch (cmd_mode) {
                 case 'f':
@@ -232,14 +268,17 @@ reactor Robot(sample_period: time = 50 ms) {
             // in left/right distances, so it's basically a PI controller
             float speed_diff = motor.left_speed->value - motor.right_speed->value;
             // slow down when approachhing goal
-            float dist_to_goal = self->goal - (self->cur_dist_L * self->direction);
-            float base_speed = self->speed * DRIVE_SPEED * (1.05f - exp(dist_to_goal));
+            float progress = self->cur_dist_L * self->direction;
+            float base_speed = self->speed * DRIVE_SPEED;
 
-            float factor = (self->cur_angle * DRIVE_K1) + (speed_diff * DRIVE_K2);
+            float angle_factor = ((self->cur_angle * DRIVE_K1) + (speed_diff * DRIVE_K2)) * self->direction;
+            float speed_factor = (0.1f + 0.9f * SIGMOID((progress - self->goal*3/4.0f)/4.0f));
 
-            float new_left = GATE(0, base_speed + factor, 2*base_speed);
-            float new_right = GATE(0, base_speed - factor, 2*base_speed);
+            float new_left = GATE(0, base_speed * speed_factor + angle_factor, 2*base_speed);
+            float new_right = GATE(0, base_speed * speed_factor - angle_factor, 2*base_speed);
 
+            printf("base speed %.2f, progress %.2f, goal %d, left %.2f, right %.2f\n",
+                base_speed, progress, self->goal, new_left, new_right);
             lf_set(motor.left_speed, self->direction * new_left);
             lf_set(motor.right_speed, self->direction * new_right);
         =}
@@ -269,7 +308,7 @@ reactor Robot(sample_period: time = 50 ms) {
             token = strtok(NULL, DELIM);
             self->goal = strtol(token, NULL, 10);
 
-            printf("parsed command: mode %c, speed %d, goal %d", cmd_mode, self->speed, self->goal);
+            printf("parsed command: mode %c, speed %d, goal %d\n", cmd_mode, self->speed, self->goal);
 
             switch (cmd_mode) {
                 case 'f':
@@ -311,15 +350,18 @@ reactor Robot(sample_period: time = 50 ms) {
             // We're trying to keep the robot stationary as it turns, so 
             // the difference between left/right distances should be 0;
             float speed_diff = motor.left_speed->value - motor.right_speed->value;
-            float dist_to_goal = self->goal - (self->cur_angle * self->direction);
             // slow down as we approach goal
-            float base_speed = self->speed * TURN_SPEED * (1.05f - exp(dist_to_goal));
+            float progress = self->cur_angle * self->direction;
+            float base_speed = self->speed * TURN_SPEED;
 
-            float factor = (self->cur_dist_L + self->cur_dist_R) * 0.0005f;
+            float angle_factor = 0.1f + 0.9f * SIGMOID((progress - self->goal*3/4.0f)/5.0f);
+            float speed_factor = (self->cur_dist_L + self->cur_dist_R) * 0.0001f;
 
-            float new_left = -GATE(0, base_speed + factor, 2*base_speed);
-            float new_right = GATE(0, base_speed + factor, 2*base_speed);
+            float new_left = -GATE(0, base_speed * angle_factor - speed_factor, 2*base_speed);
+            float new_right = GATE(0, base_speed * angle_factor - speed_factor, 2*base_speed);
 
+            printf("base speed %.2f, progress %.2f, goal %d, left %.2f, right %.2f\n",
+                base_speed, progress, self->goal, new_left, new_right);
             lf_set(motor.left_speed, self->direction * new_left);
             lf_set(motor.right_speed, self->direction * new_right);
         =}
@@ -472,6 +514,14 @@ reactor BTReceiver {
         // clear line_ready flag after processing
         line_ready = false; 
     =}
+
+    timer delay_start(3 s);
+
+    reaction(delay_start) {=
+        // delayed setup to allow serial monitor to catch the message
+        setup_uart();
+    =}
+
 }
 
 main reactor {
