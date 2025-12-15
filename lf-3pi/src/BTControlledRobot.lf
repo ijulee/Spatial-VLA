@@ -33,6 +33,9 @@
  *   An unsigned integer indicating the goal distance (cm) or angle (deg) when 
  *   driving or turning, respecttively.
  *
+ * Bluetooth device name: SVLM-bot
+ * Bluetooth device address: 00:14:03:06:75:c2
+ * Bluetooth connection PIN: 1234
  *****************************************************************************/
 
 target C {
