@@ -20,22 +20,8 @@ processor = None
 async def load_model():
     """Load model when server starts (runs once)"""
     global model, processor
-    print("🚀 Loading Llama 3.2 11B Vision...")
-    
     model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-    
-    # Use the HF token for authentication
-    # from huggingface_hub import login
-    # token = os.environ.get('HF_TOKEN')
-    
-    # if not token or token == 'hf_your_token_here':
-    #     print("❌ ERROR: No valid HF_TOKEN set!")
-    #     print("Get your token from: https://huggingface.co/settings/tokens")
-    #     print("Then set it in the code or as environment variable")
-    #     return
-    
-    # print("🔑 Logging into Hugging Face...")
-    # login(token=token)
+
     
     model = MllamaForConditionalGeneration.from_pretrained(
         model_id,
@@ -45,7 +31,6 @@ async def load_model():
     )
     processor = AutoProcessor.from_pretrained(model_id)
     
-    print("✅ Model loaded and ready!")
 
 # Request/Response formats
 class InferenceRequest(BaseModel):
@@ -74,7 +59,6 @@ def base64_to_opencv(base64_string: str) -> np.ndarray:
 async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
-        print(f"📸 Received inference request: {request.prompt}...")
         
         # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
@@ -100,8 +84,6 @@ async def run_inference(request: InferenceRequest):
             messages, 
             add_generation_prompt=True
         )
-        
-        print("🧠 Running VLM inference...")
         
         # Process image and text separately, then combine
         inputs = processor(
@@ -134,7 +116,6 @@ async def run_inference(request: InferenceRequest):
             # Fallback: just remove the input prompt
             response_text = generated_text.replace(input_text, "").strip()
         
-        print(f"✅ Response: {response_text[:100]}...")
         
         return InferenceResponse(
             success=True,
@@ -143,22 +124,14 @@ async def run_inference(request: InferenceRequest):
         
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        print(f"❌ Error: {str(e)}")
-        print(f"📋 Full traceback:\n{error_details}")
+        err = traceback.format_exc()
+        print(err)
+
         return InferenceResponse(
             success=False,
             error=str(e)
         )
 
-@app.get("/health")
-async def health_check():
-    """Check if server is alive"""
-    return {
-        "status": "healthy",
-        "model": "Llama-3.2-11B-Vision",
-        "model_loaded": model is not None
-    }
 
 @app.get("/")
 async def root():
@@ -167,7 +140,6 @@ async def root():
         "message": "Robot VLM Server",
         "endpoints": {
             "POST /inference": "Send images for VLM processing",
-            "GET /health": "Health check"
         }
     }
 
