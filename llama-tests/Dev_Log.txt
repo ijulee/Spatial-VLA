@@ -1,0 +1,51 @@
+Setup:
+-Using LLama 3.2 Locally
+    -Sign up for it https://www.llama.com/?utm_source=ai_meta_site&utm_medium=web&utm_content=AI_nav&utm_campaign=09252025_moment
+    -pip install llama-stack
+    -llama model download --source meta --model-id Llama3.2-11B-Vision
+    -pip install huggingface-hub
+    -pip install -U transformers --upgrade
+    -pip install accelerate
+    -nvcc --version
+        -Download Pytorch with the cuda version listed from the command above and the link below
+        -https://pytorch.org/get-started/locally/
+        -This test is being done in CUDA 12.9, but latest version suppoer 12.8, 12.6 ,and 13.0
+            -for CUDA 12.9 ONLY:
+            -pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu129 
+    -huggingface-cli hf auth login
+        -ALT: huggingface-cli login
+            -This might be the more appropriate one since we are using huggingface 0.31 something
+    
+Comments:
+    -Really annoying error is persistant on my machine where I can only download dependencies into the environment by explicitly calling executables
+        inside of the environment
+            -'& "C:/Users/{NAME}/Desktop/Spatial-VLA/venv./Scripts/python.exe" -m ensurepip --upgrade'
+            -'& "C:/Users/{NAME}/Desktop/Spatial-VLA/venv./Scripts/python.exe" -m pip install --upgrade pip'
+            -'& "C:/Users/{NAME}/Desktop/Spatial-VLA/venv./Scripts/pip" install {library}'
+            -& "C:/Users/{NAME}/Desktop/Spatial-VLA/.venv/Scripts/huggingface-cli.exe" hf auth login 
+                    -or just login
+    -I think pip install llama-stack might get us most of the dependencies except maybe torch
+    -If we have other people running this we need to request access to huggingface's llama 
+        -We probably want to find a way to run this locally in case there's a fee.
+        -What I originally though of as me downloading the model is me downloading the pre-trained weights.
+        -Request Timing:
+            -Requested: 11/30/2025 4:18 pm
+            -Recieved:  11/30/2025 4:24 pm
+        -I made a write token -- gives the most access, probably least security.
+        -Looks like I was wrong actually, It seems that after getting everything setup I am actually downloading the full model.
+        -Also I am not sure if this has a public API key, but since we are running it locally I don't think theres a way to run up my tokens (that don't exist)
+    -I don't know how much space the school has allocated for us but just getting the dependencies and downloading the model has eating up almost 30 GB on my disk
+        -MORE THAN LIKELY we will need to setup a server using someone's laptop so that we can proccess and send prompts to school computer
+    -First Startup/download took about 10 minutes, but it looks like executing the program afterward is much faster as they use checkpoints.
+        -First launch still takes forever though. More than likely pipelining/continuous feed will be a lot faster (hopefully)
+        -I think I might not have enough compute to run this in an efficient manner:
+            -Specs: RTX 2060, i7-127000k, 32 GB ram
+                -hitting gpu and cpu limit, although I do have programs running in the background
+                    -Googled it and 11B-Vision needs 22GBs of VRAM 
+                        -The school computers have ~16GBs (RTX 1000T), I don't know if thats like distributed or what considering how laggy they get.
+                            -Even then we probably want to run the quantized version of the model, Although the papers specifically used vision-instruct
+                                -" For all experiments we use Meta Llama-3.2-Vision-Instruct-11B"
+    -Lab Image Generation:
+        -Start: 11/30/2025 4:40 PM
+        -Prompt recieved: 11/30/2025 Never
+    
