@@ -48,7 +48,7 @@ class SpatialVLMFSM:
         for key, value in vlm_observations.items():
             # parse VLM response based on expected type
             value = self.parse_VLM_response(key, value)
-            
+
             if key in self.observations:
                 self.observations[key] = value
 
@@ -120,7 +120,15 @@ class SpatialVLMFSM:
             if isinstance(obs_key, tuple):
                 return list(obs_key)
             else:
-                return [obs_key]
+                keys = [obs_key]
+                # in init, we also need to get bench or zoo list based on people_waiting
+                if self.current_state == 'INIT':
+                    if self.observations['people_waiting']:
+                        # also need to get occupied_benches and zoos_to_visit
+                        keys.append('occupied_benches')
+                    else:
+                        keys.append('zoos_to_visit')
+                return keys
         return []
     
     def get_relevant_questions(self):
