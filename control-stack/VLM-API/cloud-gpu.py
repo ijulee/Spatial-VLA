@@ -7,7 +7,9 @@ import cv2
 from PIL import Image
 from typing import Optional
 import torch
-from transformers import MllamaForConditionalGeneration, AutoProcessor
+# from transformers import MllamaForConditionalGeneration, AutoProcessor
+from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
+from peft import PeftModel
 
 # Create the FastAPI app (this is your web server)
 app = FastAPI(title="Robot VLM Server")
@@ -20,16 +22,24 @@ processor = None
 async def load_model():
     """Load model when server starts (runs once)"""
     global model, processor
-    model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    model_id = "llava-hf/llava-v1.6-mistral-7b-hf"
 
-    
-    model = MllamaForConditionalGeneration.from_pretrained(
-        model_id,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        # token=token  # Pass token explicitly
+    graid_path = "./llava-graid-lora"
+    # model = LlavaNextForConditionalGeneration.from_pretrained(
+    #     model_id,
+    #     torch_dtype=torch.bfloat16,
+    #     device_map="cuda",
+    #     # token=token  # Pass token explicitly
+    # )
+    # processor = AutoProcessor.from_pretrained(model_id)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
+    processor = LlavaNextProcessor.from_pretrained(graid_path,use_fast=True)
+    model = LlavaNextForConditionalGeneration.from_pretrained(
+        model_id, device_map=device, torch_dtype=dtype
     )
-    processor = AutoProcessor.from_pretrained(model_id)
+    model = PeftModel.from_pretrained(model, graid_path)
+    model.eval()
     
 
 # Request/Response formats
@@ -82,16 +92,16 @@ async def run_inference(request: InferenceRequest):
         # Apply chat template to get the formatted prompt
         input_text = processor.apply_chat_template(
             messages, 
-            add_generation_prompt=True
+            add_generation_prompt=True,
+            tokenize=False
         )
         
         # Process image and text separately, then combine
         inputs = processor(
             images=[pil_image],
             text=[input_text],
-            return_tensors="pt",
-            padding=True
-        )
+            return_tensors="pt"
+        ).to("cuda")
         
         # Move inputs to GPU
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
@@ -106,15 +116,19 @@ async def run_inference(request: InferenceRequest):
             )
         
         # Decode output
-        generated_text = processor.decode(output[0], skip_special_tokens=True)
+        # generated_text = processor.decode(output[0], skip_special_tokens=True)
         
         # Extract only the assistant's response (remove prompt)
         # The response usually comes after "assistant" or similar marker
-        if "assistant" in generated_text.lower():
-            response_text = generated_text.split("assistant")[-1].strip()
-        else:
-            # Fallback: just remove the input prompt
-            response_text = generated_text.replace(input_text, "").strip()
+        # print(response_text)
+        # if "assistant" in generated_text.lower():
+            # response_text = generated_text.split("assistant")[-1].strip()
+        prompt_ids = processor.tokenizer(input_text, return_tensors="pt")["input_ids"][0]
+        gen_ids = output[0][prompt_ids.shape[0]:]  
+        response_text = processor.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        # else:
+        #     # Fallback: just remove the input prompt
+        #     response_text = generated_text.replace(input_text, "").strip()
         
         
         return InferenceResponse(

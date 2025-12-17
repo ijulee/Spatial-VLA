@@ -24,4 +24,9 @@
             -We have to make some sort of handshake for the control stack so that it knows when we can start moving again (probably just going to do a while loop to busy wait it)
                 -this is particularly sticking out for me because of reason 1, Most APIs are near instant when it comes to the data, but we are literally prompting and running a VLM so the wait times are going to be crazy
 
-                
+    -New problem:
+        -Did not know we were running this In Lingua Franca, but this is good, because we can probably use a physical action to get us out of wait modes.
+    
+
+    -API update: It works for the most part, we are using port 8000, next steps will be creating the prompts, and looking at alternatives to the current VLM if we cannot get GRAID to work.
+    
