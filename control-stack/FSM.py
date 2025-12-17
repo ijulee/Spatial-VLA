@@ -44,6 +44,9 @@ class SpatialVLMFSM:
             
         }
 
+    # update observations based on VLM responses
+    # takes a dict of observation_key: VLM_response.
+    # Doesn't have to include all observations, only those that were queried
     def update_observations(self, vlm_observations):
         for key, value in vlm_observations.items():
             # parse VLM response based on expected type
@@ -59,6 +62,7 @@ class SpatialVLMFSM:
         # after updating observations, check for possible state transition
         self._do_transition()
 
+    # internal method to check/apply transitions based on current observations
     def _do_transition(self):
         prev_state = self.current_state
         transition = self.state_transitions.get(self.current_state)
@@ -89,6 +93,7 @@ class SpatialVLMFSM:
         self.observations['target_zoo'] = self.observations['zoos_to_visit'][0] if self.observations['zoos_to_visit'] else None
         self.observations['all_zoos_visited'] = len(self.observations['zoos_to_visit']) == 0
 
+    # convert VLM response to appropriate type/format
     def parse_VLM_response(self, obs_key, response):
         response = response.strip().lower()
         if obs_key in ['people_waiting', 'at_bench', 'at_stop', 'people_waiting_current_bench', 'waiting_time_exceeded', 'all_zoos_visited']:
@@ -113,6 +118,7 @@ class SpatialVLMFSM:
     def get_current_state(self):
         return self.current_state
     
+    # get relevant observation keys for next transition
     def get_relevant_observation_keys(self):
         transition = self.state_transitions.get(self.current_state)
         if transition:
@@ -131,9 +137,18 @@ class SpatialVLMFSM:
                 return keys
         return []
     
+    # get relevant questions for next transition
     def get_relevant_questions(self):
         keys = self.get_relevant_observation_keys()
         return {key: self.question_dict[key] for key in keys if key in self.question_dict}
+    
+    # get target bench or zoo, return tuple (type, id)
+    def get_target(self):
+        if self.current_state in ['DRIVETONEARESTBENCH', 'PICKUP']:
+            return ('bench', self.observations['target_bench'])
+        elif self.current_state in ['DRIVETONEARESTSTOP', 'VIEWANIMALS']:
+            return ('zoo', self.observations['target_zoo'])
+        return (None, None)
 
 
 
