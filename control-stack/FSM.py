@@ -149,10 +149,10 @@ class SpatialVLMFSM:
                 keys = [obs_key]
                 # in init, we also need to get bench or zoo list based on people_waiting
                 if self.current_state in ('INIT', 'PICKUP'):
-                    if self.observations['people_waiting']:
+                    if self.observations['people_waiting'] or self.observations['people_waiting'] is None:
                         # also need to get occupied_benches and zoos_to_visit
                         keys.append('occupied_benches')
-                    else:
+                    elif self.current_state == 'INIT' and not self.observations['people_waiting']:
                         keys.append('zoos_to_visit')
                 return keys
         return []
