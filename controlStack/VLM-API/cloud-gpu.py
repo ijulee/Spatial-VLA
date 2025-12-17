@@ -10,7 +10,7 @@ import torch
 # from transformers import MllamaForConditionalGeneration, AutoProcessor
 from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
 from peft import PeftModel
-
+import asyncio
 # Create the FastAPI app (this is your web server)
 app = FastAPI(title="Robot VLM Server")
 
@@ -66,6 +66,12 @@ def base64_to_opencv(base64_string: str) -> np.ndarray:
     return img
 
 @app.post("/inference", response_model=InferenceResponse)
+async def run_inference_await(request: InferenceRequest):
+    ret = await asyncio.wait_for(run_inference(request),timeout=4.0)
+    return ret
+
+
+
 async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
@@ -131,7 +137,7 @@ async def run_inference(request: InferenceRequest):
         #     response_text = generated_text.replace(input_text, "").strip()
         
         
-        return InferenceResponse(
+        return  InferenceResponse(
             success=True,
             text=response_text
         )

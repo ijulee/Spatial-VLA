@@ -33,7 +33,7 @@ def send_to_VLM(img,phase) :
             img_bytes = buffer.tobytes()
             img_b64 = base64.b64encode(img_bytes).decode('utf-8')
             # try:
-            prompt = "Count the number of men"
+            prompt = phase
             # prompt =   "Give me the coordinates of the closest man in the type of a python Dict (ONLY GIVE ME THE DICT) {\"x\": x_val, \"y\": y_val}, if you cant give me {\"x\": x_val, \"y\": y_val} NEVER explain yourself, only the dict" if (phase=="People")  else "Give me the coordinates of the closest Bench in the type of a python Dict (ONLY GIVE ME THE DICT) {'x': x_val, 'y': y_val}, if you cant give me {'x': x_val, 'y': y_val} NEVER explain yourself, only the dict" 
             payload = {
                 "image": img_b64,
@@ -49,7 +49,7 @@ def send_to_VLM(img,phase) :
                 # timeout=30
             )
             timing = time.perf_counter() - start
-            print(response.json())
+            # print(response.json())
             print("RESPONSE TIME: " , timing, " seconds" )
         return response
     return None
@@ -272,13 +272,16 @@ robot_coords = {"x": 0, "y" : 0}
 
 def is_robot_moving(img,supposed_to_move):
     clock_data = get_clock_box(img)
-    if(robot_coords['x'] == clock_data['xywh']['x'] and robot_coords['y'] == clock_data['xywh']['y'] and supposed_to_move):
-        return True
-    robot_coords['x'] == clock_data['xywh']['x']
-    robot_coords['y'] == clock_data['xywh']['y']
-
+    try:
+        if(clock_data == None):
+            return False
+        if(robot_coords['x'] == clock_data['xywh']['x'] and robot_coords['y'] == clock_data['xywh']['y'] and supposed_to_move):
+            return True
+        robot_coords['x'] == clock_data['xywh']['x']
+        robot_coords['y'] == clock_data['xywh']['y']
+    except:
+        return False
     return False
-
 
 def test_bench():
     # img = Image.open("C:/Users/randy/OneDrive/Desktop/Spatial-VLA/Photos/Lab_photo.jpg")
@@ -301,7 +304,8 @@ def test_bench():
     prev_state = ""
     triangulate = False
     heading_data = {"x1": 0, "y1" : 0,  "x2": 0, "y2": 0}
-    print(fsm.get_relevant_questions())   
+    vlm_observations = {}
+    # print(fsm.get_relevant_questions())   
     while True:
         ret,img  = camera.read()
 
@@ -317,10 +321,20 @@ def test_bench():
             boxed_img =  results[0].plot()
             display(boxed_img)
 
+
+            questions = fsm.get_relevant_questions()
+
             if(first_instance or query):
-                response = send_to_VLM(img,fsm.get_relevant_questions())
-                response_text = response.json()
-                fsm.update_observations(response_text['text'])
+                for key, prompt in questions.items():
+                    response = send_to_VLM(img, prompt)
+                    print(f"VLM Response for '{prompt}': {response.json()['text']}")
+                    vlm_observations[key] = response.json()['text']
+                # print(response.json()['text'])
+
+                # response = send_to_VLM(img,prompt)
+                # response_text = response.json()
+                # print(response)
+                fsm.update_observations(vlm_observations)
                 first_instance=False
 
             if(prev_state != fsm.get_current_state()):
@@ -329,25 +343,21 @@ def test_bench():
                 
 
             
-            if(triangulate):
-                clock_data = get_clock_box(boxed_img)
-                heading_data['x1'] = clock_data['xywh']['x']
-                heading_data['y1'] = clock_data['xywh']['y']
+            # if(triangulate):
+            #     clock_data = get_clock_box(results)
+            #     heading_data['x1'] = clock_data['xywh']['x']
+            #     heading_data['y1'] = clock_data['xywh']['y']
 
-                robot.send_message("d,2,1")
-                time.sleep(0.6)
-                clock_data = get_clock_box(boxed_img)
-                heading_data['x2'] = clock_data['xywh']['x']
-                heading_data['y2'] = clock_data['xywh']['y']
-
-
-
-
-                triangulate= False
+            #     robot.send_message("d,2,1")
+            #     time.sleep(0.6)
+            #     clock_data = get_clock_box(results)
+            #     heading_data['x2'] = clock_data['xywh']['x']
+            #     heading_data['y2'] = clock_data['xywh']['y']
+            #     triangulate= False
 
 
             supposed_to_move = True if fsm.get_current_state() == "DRIVETONEARESTBENCH" else True if  fsm.get_current_state() == "DRIVETONEARESTSTOP" else False
-            query = is_robot_moving(boxed_img, supposed_to_move) or not supposed_to_move
+            query = is_robot_moving(results, supposed_to_move) or not supposed_to_move
         
 
 if __name__ == "__main__":
