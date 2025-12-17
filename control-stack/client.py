@@ -4,6 +4,7 @@
 Quick test - sends a small red square image to your VLM server
 """
 
+import json
 import requests
 import base64
 import io
@@ -28,7 +29,7 @@ def send_to_VLM(img,phase) :
             img_bytes = buffer.tobytes()
             img_b64 = base64.b64encode(img_bytes).decode('utf-8')
             # try:
-            prompt =   "Give me the coordinates of the closest man in the type of a python Dict (ONLY GIVE ME THE DICT) {'x': x_val, 'y': y_val}, if you cant give me {'x': x_val, 'y': y_val} NEVER explain yourself, only the dict" if (phase=="People")  else "Give me the coordinates of the closest Bench in the type of a python Dict (ONLY GIVE ME THE DICT) {'x': x_val, 'y': y_val}, if you cant give me {'x': x_val, 'y': y_val} NEVER explain yourself, only the dict" 
+            prompt =   "Give me the coordinates of the closest man in the type of a python Dict (ONLY GIVE ME THE DICT) {\"x\": x_val, \"y\": y_val}, if you cant give me {\"x\": x_val, \"y\": y_val} NEVER explain yourself, only the dict" if (phase=="People")  else "Give me the coordinates of the closest Bench in the type of a python Dict (ONLY GIVE ME THE DICT) {'x': x_val, 'y': y_val}, if you cant give me {'x': x_val, 'y': y_val} NEVER explain yourself, only the dict" 
             payload = {
                 "image": img_b64,
                 "prompt": prompt,
@@ -119,33 +120,40 @@ def getPhases(latch, results):
      
 
 #Get new coords depending on distance VLM tells us to go
-def getCommand(results,xy):
+def getCommand(results,xy)->str:
     clock_meta_data = get_clock_box(results)
-    if(clock_meta_data['xywh'][0] < xy[0]):
-        return 'D'
-    if(clock_meta_data['xywh'][0] > xy[0]):
-        return 'B'
-    if(clock_meta_data['xywh'][0] > xy[1]):
-        return 'L'
-    if(clock_meta_data['xywh'][0] > xy[1]):
-        return 'R'
-    
+    try:
+        if(clock_meta_data['xywh'][0] < xy['x']):
+            return 'D'
+        if(clock_meta_data['xywh'][0] > xy['x']):
+            return 'B'
+        if(clock_meta_data['xywh'][0] > xy['y']):
+            return 'L'
+        if(clock_meta_data['xywh'][0] > xy['y']):
+            return 'R'
+        
+        return ''
+    except:
+        return ''
 
 
-
-def getCoords(results,response): 
+def getCoords(results,response) -> dict: 
     # return [coords["x"], coords["y"]]
     coords = {"x":0,"y": 0}
 
     clock_meta_data = get_clock_box(results)
+    # print(json.loads(response['text']))
+    print("TEST:" ,type(response['text']))
     try:
-        coords = response["text"]
-
-        coords = [coords["x"]+clock_meta_data['xywh'][0],coords["y"]+clock_meta_data['xywh'][1]]
+        coords = json.loads(response['text'])
+        print("UNPACK",coords)
+        coords = {"x": coords['x']+float(clock_meta_data['xywh'][0]),"y":coords['y']+float(clock_meta_data['xywh'][1])}
+        return coords
     except:
         print("missed")
-    finally:
-        return coords
+        return None
+
+    
 
 def getNewCriticalPoint(results,coords):
     try:
@@ -190,7 +198,7 @@ camera_id = 0
 camera = cv2.VideoCapture(camera_id)
 model = YOLO('yolov8n.pt')
 first_instance=True
-xy = [250,250]
+xy = {"x":250,"y":250}
 latch = [False]
 
 while(True): 
@@ -208,27 +216,39 @@ while(True):
         boxed_img =  results[0].plot()
         display(boxed_img)
 
-
-
         if(first_instance or getNewCriticalPoint(results,xy)):
             response = send_to_VLM(img,getPhases(latch,results))
             xy = getCoords(results,response.json())
-            first_instance = False
+            if(xy != None):    
+                first_instance = False
+        print(xy)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        
+        print(latch,getPhases(latch,results))
+        # print(xy)
+        match(getCommand(results,xy)):
+            case 'D':
+                #Drive forward command
+                  print("go forward")
+            case 'B':
+                #Reverse
+                        #   Prompt Robot to ask if we drove to where we are supposed to
+                  print("go Backwards")
 
-        # print(latch,getPhases(latch,results))
-        # match(getCommand(results,xy)):
-        #     case 'D':
-        #         #Drive forward command
-        #     case 'B':
-        #         #Reverse
-        #     case 'R':
-        #         #turn 90 degrees drive forward
-        #     case 'L':
-        #         #turn -90 degrees drive forward
-        #     case _:
-        #         #reorient with whatever direction we started with.
+            case 'R':
+                #turn 90 degrees drive forward
+                        #   Prompt Robot to ask if we drove to where we are supposed to
+                  print("Turn right go forward")
+
+            case 'L':
+                #turn -90 degrees drive forward
+                        #   Prompt Robot to ask if we drove to where we are supposed to
+                        #   go  back to original position afterwards.
+                  print("turn left go forwards")
+            case _:
+                print("BAD DATA")
+
                  
 
             
