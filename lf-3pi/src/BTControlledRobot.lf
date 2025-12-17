@@ -264,8 +264,8 @@ reactor Robot(sample_period: time = 50 ms) {
             }
 
             instant_t reply_time = lf_time_physical();
-            string reply_str;
-            sprintf(reply_str, "%ll", reply_time - receive_time);
+            char reply_str[30];
+            snprintf(reply_str, 30, "%lld\n", reply_time - receive_time);
             lf_set(reply, reply_str);
 
             self->reset_angle = true;
