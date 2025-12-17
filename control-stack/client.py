@@ -5,6 +5,7 @@ Quick test - sends a small red square image to your VLM server
 """
 
 import json
+import numpy as np
 import requests
 import base64
 import io
@@ -192,82 +193,81 @@ def getNewCriticalPoint(results,coords):
 #     if cv2.waitKey(1) & 0xFF == ord('q'):
 #         break
 
+
 # cv2.destroyAllWindows()
-    
-camera_id = 0
-camera = cv2.VideoCapture(camera_id)
-model = YOLO('yolov8n.pt')
-first_instance=True
-xy = {"x":250,"y":250}
-latch = [False]
+def project_pipeline():
+    camera_id = 0
+    camera = cv2.VideoCapture(camera_id)
+    model = YOLO('yolov8n.pt')
+    first_instance=True
+    xy = {"x":250,"y":250}
+    latch = [False]
 
-while(True): 
-    ret,img = camera.read()
-    if not ret:
-        print("MISSING CAPTURE: NOT BREAKING -- HOPEFULLY WE RECAPTURE")
-    else:
+    while(True): 
+        ret,img = camera.read()
+        if not ret:
+            print("MISSING CAPTURE: NOT BREAKING -- HOPEFULLY WE RECAPTURE")
+        else:
 
-        results = model(
-        source=img, #The camera port
-        device="cpu",  #Cuda device (gpu)
-        verbose=False #shuts it up
-        )
+            results = model(
+            source=img, #The camera port
+            device="cpu",  #Cuda device (gpu)
+            verbose=False #shuts it up
+            )
 
-        boxed_img =  results[0].plot()
-        display(boxed_img)
+            boxed_img =  results[0].plot()
+            display(boxed_img)
 
-        if(first_instance or getNewCriticalPoint(results,xy)):
-            response = send_to_VLM(img,getPhases(latch,results))
-            xy = getCoords(results,response.json())
-            if(xy != None):    
-                first_instance = False
-        print(xy)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        
-        print(latch,getPhases(latch,results))
-        # print(xy)
-        match(getCommand(results,xy)):
-            case 'D':
-                #Drive forward command
-                  print("go forward")
-            case 'B':
-                #Reverse
-                        #   Prompt Robot to ask if we drove to where we are supposed to
-                  print("go Backwards")
+            if(first_instance or getNewCriticalPoint(results,xy)):
+                response = send_to_VLM(img,getPhases(latch,results))
+                xy = getCoords(results,response.json())
+                if(xy != None):    
+                    first_instance = False
+            print(xy)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            
+            print(latch,getPhases(latch,results))
+            # print(xy)
+            match(getCommand(results,xy)):
+                case 'D':
+                    #Drive forward command
+                    print("go forward")
+                case 'B':
+                    #Reverse
+                            #   Prompt Robot to ask if we drove to where we are supposed to
+                    print("go Backwards")
 
-            case 'R':
-                #turn 90 degrees drive forward
-                        #   Prompt Robot to ask if we drove to where we are supposed to
-                  print("Turn right go forward")
+                case 'R':
+                    #turn 90 degrees drive forward
+                            #   Prompt Robot to ask if we drove to where we are supposed to
+                    print("Turn right go forward")
 
-            case 'L':
-                #turn -90 degrees drive forward
-                        #   Prompt Robot to ask if we drove to where we are supposed to
-                        #   go  back to original position afterwards.
-                  print("turn left go forwards")
-            case _:
-                print("BAD DATA")
+                case 'L':
+                    #turn -90 degrees drive forward
+                            #   Prompt Robot to ask if we drove to where we are supposed to
+                            #   go  back to original position afterwards.
+                    print("turn left go forwards")
+                case _:
+                    print("BAD DATA")
 
-                 
+def test_bench():
+    img = Image.open("C:/Users/randy/OneDrive/Desktop/Spatial-VLA/Photos/Lab_photo.jpg")
+    img = np.array(img) 
+
+    # 3. Convert RGB to BGR (Crucial for OpenCV compatibility)
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    response = send_to_VLM(img,"People")
+    print(response)
+
+
+
+if __name__ == "__main__":
+    # project_pipeline()
+    test_bench()
+
+
+
 
             
-cv2.destroyAllWindows()
-
-
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-    
+    cv2.destroyAllWindows()

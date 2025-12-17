@@ -120,7 +120,7 @@ async def run_inference(request: InferenceRequest):
         
         # Extract only the assistant's response (remove prompt)
         # The response usually comes after "assistant" or similar marker
-        print(response_text)
+        # print(response_text)
         if "assistant" in generated_text.lower():
             response_text = generated_text.split("assistant")[-1].strip()
         else:
