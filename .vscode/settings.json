@@ -1,0 +1,6 @@
+{
+    "terminal.integrated.env.windows": {
+        "PATH": "${env:PATH}"
+    },
+    "cmake.sourceDirectory": "D:/Spatial-VLA/lf-3pi/robot-lib"
+}

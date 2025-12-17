@@ -28,10 +28,6 @@ class BluetoothBot:
 
         except serial.SerialException as e:
             print(f"Could not connect to {PORT}: {e}. Check Bluetooth settings.")
-        finally:
-            if self.ser is not None and self.ser.is_open:
-                self.ser.close()
-                print("Connection closed.")
 
     # close the serial connection
     def close_connection(self):
