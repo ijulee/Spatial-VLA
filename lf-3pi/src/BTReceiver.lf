@@ -1,0 +1,252 @@
+/**
+ * Lingua Franca program for the Pololu 3pi+ 2040 to configure an HC-05 Bluetooth module.
+ *
+ * This program sends AT commands to change the HC-05's name and password.
+ *
+ * I-Jui: Disclaimer, this is adapted from LLM generated code with hallucinated nonsense fixed.
+ *
+ * Hardware Setup:
+ * 1. GP28 (UART0 TX) -> HC-05 RXD
+ * 2. GP29 (UART0 RX) -> HC-05 TXD
+ * 3. 3V3 (OUT)       -> HC-05 VCC
+ * 4. GND             -> HC-05 GND
+ * 5. 3V3 (OUT)       -> HC-05 EN (only for AT mode to set name/pswd)
+ *
+ * How to use:
+ * 1. Connect the HC-05 as described above.
+ * 2. IMPORTANT: Power on the RP2040 (which powers the HC-05) ONLY AFTER
+ * the KEY/EN pin is already connected to 3.3V. This boots the
+ * module into AT command mode (baud rate 38400).
+ * 3. Compile and flash this program to the 3pi+ 2040.
+ * 4. Open the serial monitor (e.g., `screen -b 115200 /dev/ttyACM0`).
+ * 5. The program will automatically send the commands.
+ *
+ */
+target C {
+    platform: {
+        name: "rp2040",
+        board: "pololu_3pi_2040_robot"
+    },
+    keepalive: true,
+    threading: false
+};
+
+import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
+
+preamble {=
+    #include "pico/stdlib.h"
+    #include <stdio.h>
+    #include <hardware/uart.h>
+    #include <hardware/irq.h>
+    #include <string.h>
+=}
+
+
+main reactor {
+    preamble {=
+        // Define the UART for the HC-05
+        #define UART_ID uart0
+        #define BAUD_RATE 9600
+        #define DATA_BITS 8
+        #define STOP_BITS 1
+        #define PARITY    UART_PARITY_NONE
+
+        // Define UART pins
+        #define UART_TX_PIN 28
+        #define UART_RX_PIN 29
+
+         // --- Ring Buffer for ISR-driven UART ---
+         #define RING_BUF_SIZE 256
+        volatile char uart_ring_buffer[RING_BUF_SIZE];
+        volatile uint ring_head = 0;
+        volatile uint ring_tail = 0;
+
+        // --- Line Buffer for Main Loop ---
+        #define LINE_BUF_SIZE 128
+        volatile char uart_line_buffer[LINE_BUF_SIZE];
+        volatile int line_idx = 0;
+        volatile bool line_ready = false;
+
+        // RX interrupt handler (ISR)
+        // This is now minimal, fast, and non-blocking.
+        void on_uart_rx() {
+            while (uart_is_readable(UART_ID)) {
+                char ch = uart_getc(UART_ID);
+
+                // Calculate next head position
+                uint next_head = (ring_head + 1) % RING_BUF_SIZE;
+
+                // Check if buffer is full
+                if (next_head != ring_tail) {
+                    // Not full, add char to buffer
+                    uart_ring_buffer[ring_head] = ch;
+                    ring_head = next_head;
+                }
+                // else: Buffer is full, char is dropped.
+            }
+        }
+
+        // Function to initialize UART0 for the HC-05
+        void setup_uart() {
+            // Initialize UART
+            uart_init(UART_ID, BAUD_RATE);
+
+            // Set the TX and RX pins
+            gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+            gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+
+            // Set format
+            uart_set_hw_flow(UART_ID, false, false);
+            uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
+
+            // Turn off FIFO's - we want to do this character by character
+            uart_set_fifo_enabled(UART_ID, false);
+
+            // Set up and enable the RX interrupt
+            int UART_IRQ = (UART_ID == uart0) ? UART0_IRQ : UART1_IRQ;
+            irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
+            irq_set_enabled(UART_IRQ, true);
+
+            // Enable the UART to fire an interrupt when data is received.
+            uart_set_irq_enables(UART_ID, true, false);
+
+            printf("Bluetooth UART initialized at %d baud.\n", BAUD_RATE);
+        }
+
+        // Function to send a command to the HC-05
+        // All AT commands must end with \r\n
+        void setup_msg(const char* msg) {
+            printf("Sending: %s\n", msg);
+            uart_puts(UART_ID, msg);
+            uart_puts(UART_ID, "\r\n");
+        }
+    =}
+
+    state cur_state: char = 's';
+    
+    motor = new Motors();
+
+    physical action cmd_received; // Triggered by interrupt
+    
+    timer delay_start(5 sec);
+    timer disp_refresh(0, 100 msec);
+
+    d = new Display();
+
+    reaction(startup) -> d.line0 {=
+        lf_set(d.line0, "START");
+    =}
+
+    reaction(delay_start) -> d.line0 {=
+        // Start the command sequence after 5s
+        // starting too quickly and the serial monitor won't catch messages
+        setup_uart();
+        lf_set(d.line0, "WAITING...");
+    =}
+
+    // This reaction is triggered by the UART RX interrupt
+    // when a full line ('\n') has been received.
+    reaction(cmd_received) {=
+        // We can safely read the line buffer
+        const char* cmd = (const char*)uart_line_buffer;
+
+        // Print to USB serial for debugging
+        printf("Command Received: '%s'\n", cmd);
+
+        self->cur_state = cmd[0];
+
+        // Clear the line_ready flag *after* processing.
+        // This tells the poller it can assemble the next line.
+        line_ready = false; 
+    =}
+
+    reaction (disp_refresh) -> d.line0, d.line1, motor.left_power, motor.right_power {=
+        static char buf[17];
+        snprintf(buf, 17, "%c", self->cur_state);
+        lf_set(d.line1, buf);
+
+        switch (self->cur_state) {
+            case 'f':
+                lf_set(d.line0, "FORWARD");
+                lf_set(motor.left_power, 0.1f);
+                lf_set(motor.right_power, 0.1f);
+                break;
+            case 'b':
+                lf_set(d.line0, "BACK");
+                lf_set(motor.left_power, -0.1f);
+                lf_set(motor.right_power, -0.1f);
+                break;
+            case 'l':
+                lf_set(d.line0, "LEFT");
+                lf_set(motor.left_power, -0.1f);
+                lf_set(motor.right_power, 0.1f);
+                break;
+            case 'r':
+                lf_set(d.line0, "RIGHT");
+                lf_set(motor.left_power, 0.1f);
+                lf_set(motor.right_power, -0.1f);
+                break;
+            case 's':
+                lf_set(d.line0, "STOP");
+                lf_set(motor.left_power, 0.0f);
+                lf_set(motor.right_power, 0.0f);
+                break;
+            default:
+                lf_set(d.line0, "UNKNOWN!");
+                break;
+        }
+    =}
+
+    // This reaction polls the cmd_ready flag.
+    // This is necessary because the interrupt handler (on_uart_rx)
+    // cannot schedule a physical action directly.
+    // We poll quickly to check the flag set by the ISR.
+    timer poll_timer(0, 10 msec);
+    reaction(poll_timer) -> cmd_received {=
+        // Do not process new chars if the main loop
+        // hasn't consumed the last line.
+        if (line_ready) {
+            return;
+        }
+
+        // Consume characters from the ring buffer
+        while (ring_tail != ring_head) {
+            char ch = uart_ring_buffer[ring_tail];
+            ring_tail = (ring_tail + 1) % RING_BUF_SIZE;
+
+            // Handle backspace/delete for basic terminal editing
+            if (ch == '\b' || ch == 127) {
+                if (line_idx > 0) {
+                    line_idx--;
+                }
+                continue; // Don't add to buffer
+            }
+
+            // Treat EITHER \n or \r as line ending
+            if (ch == '\n' || ch == '\r') {
+                if (line_idx > 0) { // We have a complete line
+                    uart_line_buffer[line_idx] = '\0'; // Null terminate
+                    line_ready = true;
+                    line_idx = 0; // Reset for next line
+                    
+                    // Schedule the main reaction
+                    lf_schedule(cmd_received, 0);
+                    
+                    // Stop processing chars THIS cycle.
+                    // Wait for cmd_received to clear line_ready.
+                    break;
+                }
+                // else: empty line, just ignore it.
+            } else {
+                // It's a normal character
+                if (line_idx < LINE_BUF_SIZE - 1) {
+                    uart_line_buffer[line_idx++] = ch;
+                } else {
+                    // Line buffer overflow, reset.
+                    line_idx = 0;
+                }
+            }
+        }
+    =}
+}
