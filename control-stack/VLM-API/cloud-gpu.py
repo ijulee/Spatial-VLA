@@ -92,16 +92,16 @@ async def run_inference(request: InferenceRequest):
         # Apply chat template to get the formatted prompt
         input_text = processor.apply_chat_template(
             messages, 
-            add_generation_prompt=True
+            add_generation_prompt=True,
+            tokenize=False
         )
         
         # Process image and text separately, then combine
         inputs = processor(
             images=[pil_image],
             text=[input_text],
-            return_tensors="pt",
-            padding=True
-        )
+            return_tensors="pt"
+        ).to("cuda")
         
         # Move inputs to GPU
         inputs = {k: v.to(model.device) for k, v in inputs.items()}

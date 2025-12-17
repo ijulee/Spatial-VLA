@@ -30,7 +30,8 @@ def send_to_VLM(img,phase) :
             img_bytes = buffer.tobytes()
             img_b64 = base64.b64encode(img_bytes).decode('utf-8')
             # try:
-            prompt =   "Give me the coordinates of the closest man in the type of a python Dict (ONLY GIVE ME THE DICT) {\"x\": x_val, \"y\": y_val}, if you cant give me {\"x\": x_val, \"y\": y_val} NEVER explain yourself, only the dict" if (phase=="People")  else "Give me the coordinates of the closest Bench in the type of a python Dict (ONLY GIVE ME THE DICT) {'x': x_val, 'y': y_val}, if you cant give me {'x': x_val, 'y': y_val} NEVER explain yourself, only the dict" 
+            prompt = "Count the number of men"
+            # prompt =   "Give me the coordinates of the closest man in the type of a python Dict (ONLY GIVE ME THE DICT) {\"x\": x_val, \"y\": y_val}, if you cant give me {\"x\": x_val, \"y\": y_val} NEVER explain yourself, only the dict" if (phase=="People")  else "Give me the coordinates of the closest Bench in the type of a python Dict (ONLY GIVE ME THE DICT) {'x': x_val, 'y': y_val}, if you cant give me {'x': x_val, 'y': y_val} NEVER explain yourself, only the dict" 
             payload = {
                 "image": img_b64,
                 "prompt": prompt,
