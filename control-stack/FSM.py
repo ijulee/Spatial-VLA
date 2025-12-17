@@ -128,7 +128,7 @@ class SpatialVLMFSM:
             else:
                 keys = [obs_key]
                 # in init, we also need to get bench or zoo list based on people_waiting
-                if self.current_state == 'INIT':
+                if self.current_state in ('INIT', 'PICKUP'):
                     if self.observations['people_waiting']:
                         # also need to get occupied_benches and zoos_to_visit
                         keys.append('occupied_benches')
@@ -138,9 +138,13 @@ class SpatialVLMFSM:
         return []
     
     # get relevant questions for next transition
-    def get_relevant_questions(self):
-        keys = self.get_relevant_observation_keys()
+    def get_relevant_questions(self, keys=None):
+        if keys==None:
+            keys = self.get_relevant_observation_keys()
         return {key: self.question_dict[key] for key in keys if key in self.question_dict}
+    
+    def get_init_keys(self):
+        return ['people_waiting', 'occupied_benches', 'zoos_to_visit']
     
     # get target bench or zoo, return tuple (type, id)
     def get_target(self):
