@@ -10,11 +10,11 @@ class SpatialVLMFSM:
         self.observations = {
             'people_waiting': None,
             'occupied_benches': [],
-            'target_bench': None,
+            'target_bench': -1,
             'at_bench': None,
             'at_stop': None,
             'people_waiting_current_bench': None,
-            'target_zoo': None,
+            'target_zoo': -1,
             'zoos_to_visit': [],
             'all_zoos_visited': None,
             'waiting_time_exceeded': None,
@@ -30,10 +30,31 @@ class SpatialVLMFSM:
                              (False, False): 'VIEWANIMALS', (True, False): 'DRIVETONEARESTSTOP'}),
         }
 
-    def update_observations(self, observations):
-        for key, value in observations.items():
+        self.question_dict = {
+            'people_waiting': 'Are there 1 or more people waiting in this image? Answer Yes or No.',
+            'occupied_benches': '',
+            'target_bench': '', # shouldn't be asked directly (we keep track of it here)
+            'at_bench': f'Is the robot at the bench {self.observations["target_bench"]}? Answer Yes or No.',
+            'at_stop': f'Is the robot at the zoo stop {self.observations["target_zoo"]}? Answer Yes or No.',
+            'people_waiting_current_bench': 'Are there people at the bench closest to the clock? Respond with Yes or No.',
+            'target_zoo': '', # shouldn't be asked directly (we keep track of it here)
+            'zoos_to_visit': '', 
+            'all_zoos_visited': '', # shouldn't be asked directly (we keep track of it here)
+            'waiting_time_exceeded': '', # shouldn't be asked directly (we keep track of it here)
+            
+        }
+
+    def update_observations(self, vlm_observations):
+        for key, value in vlm_observations.items():
+            # parse VLM response based on expected type
+            value = self.parse_VLM_response(key, value)
+            
             if key in self.observations:
                 self.observations[key] = value
+
+        # update observation dependent questions
+        self.question_dict['at_bench'] = f'Is the robot at the bench {self.observations["target_bench"]}? Answer Yes or No.'
+        self.question_dict['at_stop'] = f'Is the robot at the zoo stop {self.observations["target_zoo"]}? Answer Yes or No.'
 
         # after updating observations, check for possible state transition
         self._do_transition()
@@ -68,6 +89,27 @@ class SpatialVLMFSM:
         self.observations['target_zoo'] = self.observations['zoos_to_visit'][0] if self.observations['zoos_to_visit'] else None
         self.observations['all_zoos_visited'] = len(self.observations['zoos_to_visit']) == 0
 
+    def parse_VLM_response(self, obs_key, response):
+        response = response.strip().lower()
+        if obs_key in ['people_waiting', 'at_bench', 'at_stop', 'people_waiting_current_bench', 'waiting_time_exceeded', 'all_zoos_visited']:
+            if response in ['yes', 'true']:
+                return True
+            elif response in ['no', 'false']:
+                return False
+        elif obs_key in ['occupied_benches', 'zoos_to_visit']:
+            # expecting a list of integers
+            try:
+                items = response.strip('[]').split(',')
+                return [int(item.strip()) for item in items if item.strip().isdigit()]
+            except:
+                return []
+        elif obs_key in ['target_zoo', 'target_bench']: # shouldn't have to parse these directly, but just in case
+            try:
+                return int(response)
+            except:
+                return -1
+        return response
+
     def get_current_state(self):
         return self.current_state
     
@@ -80,7 +122,10 @@ class SpatialVLMFSM:
             else:
                 return [obs_key]
         return []
-
+    
+    def get_relevant_questions(self):
+        keys = self.get_relevant_observation_keys()
+        return {key: self.question_dict[key] for key in keys if key in self.question_dict}
 
 
 

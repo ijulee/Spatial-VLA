@@ -19,7 +19,7 @@ import cv2
 from ultralytics import YOLO
 
 
-def send_to_VLM(img) :
+def send_to_VLM(img, prompt) :
     # img = cv2.imread(img_path_test,cv2.IMREAD_COLOR)
     if img is not None:
         sucess,buffer = cv2.imencode('.jpg',img)
@@ -31,7 +31,7 @@ def send_to_VLM(img) :
 
             payload = {
                 "image": img_b64,
-                "prompt": "in this format and only this format (NO TEXT AT ALL) {'X' : x_val, 'Y' : y_val} give me the coordinates of the bench closest to the man on the top right",
+                "prompt": prompt,
                 "max_tokens": 1000000, #MESS AROUND WITH THIS
                 "temperature": 1.0
             }
