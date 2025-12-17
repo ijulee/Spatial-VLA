@@ -1,6 +1,7 @@
 from FSM import SpatialVLMFSM
 import client as VLM_client
 import cv2
+import time
 from ultralytics import YOLO
 
 if __name__ == "__main__":
@@ -11,6 +12,14 @@ if __name__ == "__main__":
     # camera
     camera_id = 0
     camera = cv2.VideoCapture(camera_id)
+
+    # before looping, we need to do some initial queries
+    img = camera.read()[1]
+    questions = fsm.get_relevant_questions(fsm.get_init_keys())
+    for key, prompt in questions.items():
+        response = VLM_client.send_to_VLM(img, prompt)
+        print(f"Initial VLM Response for '{prompt}': {response}")
+        fsm.update_observations({key: response})
 
     # main loop to update FSM based on robot observations
     while True:
@@ -37,6 +46,17 @@ if __name__ == "__main__":
 
         # update observations based on responses
         fsm.update_observations(vlm_observations)
+
+        # if driving state, we'll need to requery to get a direction
+        if fsm.get_current_state() in ['DRIVETONEARESTBENCH', 'DRIVETONEARESTSTOP']:
+            target,id = fsm.get_target()
+            direction_prompt = f'... go to {target} {id}'
+            direction_response = VLM_client.send_to_VLM(img, direction_prompt)
+            print(f"VLM Direction Response: {direction_response}")
+
+            # send command to robot via bluetooth
+            if robot_client is not None:
+                robot_client.send_command(direction_response)
 
         # print observations
         print("Updated Observations:")
