@@ -7,7 +7,9 @@ import cv2
 from PIL import Image
 from typing import Optional
 import torch
-from transformers import MllamaForConditionalGeneration, AutoProcessor
+# from transformers import MllamaForConditionalGeneration, AutoProcessor
+from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
+from peft import PeftModel
 
 # Create the FastAPI app (this is your web server)
 app = FastAPI(title="Robot VLM Server")
@@ -20,16 +22,24 @@ processor = None
 async def load_model():
     """Load model when server starts (runs once)"""
     global model, processor
-    model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    model_id = "llava-hf/llava-v1.6-mistral-7b-hf"
 
-    
-    model = MllamaForConditionalGeneration.from_pretrained(
-        model_id,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        # token=token  # Pass token explicitly
+    graid_path = "./llava-graid-lora"
+    # model = LlavaNextForConditionalGeneration.from_pretrained(
+    #     model_id,
+    #     torch_dtype=torch.bfloat16,
+    #     device_map="cuda",
+    #     # token=token  # Pass token explicitly
+    # )
+    # processor = AutoProcessor.from_pretrained(model_id)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
+    processor = LlavaNextProcessor.from_pretrained(graid_path)
+    model = LlavaNextForConditionalGeneration.from_pretrained(
+        model_id, device_map=device, torch_dtype=dtype
     )
-    processor = AutoProcessor.from_pretrained(model_id)
+    model = PeftModel.from_pretrained(model, graid_path)
+    model.eval()
     
 
 # Request/Response formats
