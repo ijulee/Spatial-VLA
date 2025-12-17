@@ -116,16 +116,19 @@ async def run_inference(request: InferenceRequest):
             )
         
         # Decode output
-        generated_text = processor.decode(output[0], skip_special_tokens=True)
+        # generated_text = processor.decode(output[0], skip_special_tokens=True)
         
         # Extract only the assistant's response (remove prompt)
         # The response usually comes after "assistant" or similar marker
         # print(response_text)
-        if "assistant" in generated_text.lower():
-            response_text = generated_text.split("assistant")[-1].strip()
-        else:
-            # Fallback: just remove the input prompt
-            response_text = generated_text.replace(input_text, "").strip()
+        # if "assistant" in generated_text.lower():
+            # response_text = generated_text.split("assistant")[-1].strip()
+        prompt_ids = processor.tokenizer(input_text, return_tensors="pt")["input_ids"][0]
+        gen_ids = output[0][prompt_ids.shape[0]:]  
+        response_text = processor.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        # else:
+        #     # Fallback: just remove the input prompt
+        #     response_text = generated_text.replace(input_text, "").strip()
         
         
         return InferenceResponse(
