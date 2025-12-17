@@ -36,7 +36,7 @@ async def load_model():
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
     processor = LlavaNextProcessor.from_pretrained(graid_path)
     model = LlavaNextForConditionalGeneration.from_pretrained(
-        model_id, device_map=device, torch_dtype=dtype
+        model_id, device_map=device, torch_dtype=dtype, use_fast=True
     )
     model = PeftModel.from_pretrained(model, graid_path)
     model.eval()
