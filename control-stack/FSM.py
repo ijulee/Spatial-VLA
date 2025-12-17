@@ -31,15 +31,35 @@ class SpatialVLMFSM:
         }
 
         self.question_dict = {
-            'people_waiting': 'Are there 1 or more people waiting in this image? Answer Yes or No.',
-            'occupied_benches': '',
-            'target_bench': '', # shouldn't be asked directly (we keep track of it here)
-            'at_bench': f'Is the robot at the bench {self.observations["target_bench"]}? Answer Yes or No.',
-            'at_stop': f'Is the robot at the zoo stop {self.observations["target_zoo"]}? Answer Yes or No.',
-            'people_waiting_current_bench': 'Are there people at the bench closest to the clock? Respond with Yes or No.',
+            'people_waiting': 'Are there one or more people in the image? Respond with \'Yes\' or \'No\'.',
+
+            'occupied_benches': 'Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
+                                'Use these printed numbers as the bench IDs. List the benches in order from closest to '
+                                'furthest from the clock, separated by commas. For example, \'2, 1, 4, 3\'.',
+
+            'target_bench': 'Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
+                            'Use these printed numbers as the bench IDs. Which bench is closest to the clock? '
+                            'Answer with the bench ID.', # shouldn't be asked directly (we keep track of it here)
+
+            'at_bench': 'Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these '
+                        f'printed numbers as the bench IDs.  Is the clock close to bench number {self.observations["target_bench"]}? '
+                        'Respond with \'Yes\' or \'No\'.',
+
+            'at_stop': 'Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these '
+                       'printed numbers as the stop sign IDs. For each stop sign, consider all animals that are spatially '
+                       'closest to that stop sign. Is the clock close to the animals around stop sign number '
+                       f'{self.observations["target_zoo"]}? Respond with \'Yes\' or \'No\'.',
+
+            'people_waiting_current_bench': 'Are there people at the bench closest to the clock? Respond with \'Yes\' or \'No\'.',
+
             'target_zoo': '', # shouldn't be asked directly (we keep track of it here)
-            'zoos_to_visit': '', 
+
+            'zoos_to_visit': 'Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
+                             'Use these printed numbers as the stop sign IDs. List the stop signs in order from closest to '
+                             'furthest from the clock, separated by commas. For example, \'2, 1, 4, 3\'.', 
+
             'all_zoos_visited': '', # shouldn't be asked directly (we keep track of it here)
+
             'waiting_time_exceeded': '', # shouldn't be asked directly (we keep track of it here)
             
         }
@@ -151,9 +171,7 @@ class SpatialVLMFSM:
         if self.current_state in ['DRIVETONEARESTBENCH', 'PICKUP']:
             return ('bench', self.observations['target_bench'])
         elif self.current_state in ['DRIVETONEARESTSTOP', 'VIEWANIMALS']:
-            return ('zoo', self.observations['target_zoo'])
+            return ('stop sign', self.observations['target_zoo'])
         return (None, None)
-
-
 
 

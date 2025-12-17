@@ -50,7 +50,15 @@ if __name__ == "__main__":
         # if driving state, we'll need to requery to get a direction
         if fsm.get_current_state() in ['DRIVETONEARESTBENCH', 'DRIVETONEARESTSTOP']:
             target,id = fsm.get_target()
-            direction_prompt = f'... go to {target} {id}'
+            direction_prompt = (f'Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
+                               f'Use these printed numbers as the stop sign IDs. For {target} number {id}, choose the best '
+                               f'direction for the clock to move to reach that {target} while avoiding obstacles between them. '
+                               f'Answer with exactly one of: \'keep straight\', \'go left\', \'go right\', \'go up\', or \'go down\'. '
+                               f'Answer \'keep straight\' if the clock can move directly toward {target} {id} without colliding with '
+                               f'any objects. Answer \'go left\' or \'go right\' if the {target} is mainly above or below the clock and '
+                               f'it is better for the clock to pass the nearest obstacle between them on its left or right side. Answer '
+                               f'\'go up\' or \'go down\' if the {target} is mainly to the left or right of the clock and it is better '
+                               f'for the clock to pass the nearest obstacle between them above or below it.')
             direction_response = VLM_client.send_to_VLM(img, direction_prompt)
             print(f"VLM Direction Response: {direction_response}")
 
