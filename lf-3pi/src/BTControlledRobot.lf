@@ -146,6 +146,9 @@ reactor Robot(sample_period: time = 50 ms) {
     state speed: int = 0;
     state goal: int = 0;
 
+    // for timing analysis
+    output reply: string
+
     output notify0: string
     output notify1: string
     output notify2: string
@@ -207,7 +210,10 @@ reactor Robot(sample_period: time = 50 ms) {
     =}
 
     initial mode DRIVE {
-        reaction(command) -> reset(TURN) {=
+        reaction(command) -> reset(TURN), reply {=
+
+            instant_t receive_time = lf_time_physical();
+
             if (strcmp(command->value, "") == 0) {
                 return;
             }
@@ -256,6 +262,11 @@ reactor Robot(sample_period: time = 50 ms) {
                 self->speed = 0;
                 break;
             }
+
+            instant_t reply_time = lf_time_physical();
+            string reply_str;
+            sprintf(reply_str, "%ll", reply_time - receive_time);
+            lf_set(reply, reply_str);
 
             self->reset_angle = true;
             self->reset_dist = true;
@@ -445,12 +456,14 @@ reactor BTReceiver {
         }
 
         // send message to HC-05 (end with CRLF)
-        void setup_msg(const char* msg) {
+        void send_msg(const char* msg) {
             printf("Sending: %s\n", msg);
             uart_puts(UART_ID, msg);
             uart_puts(UART_ID, "\r\n");
         }
     =}
+
+    input reply: string
 
     state cur_state: char = 's';
     state count: int = 0
@@ -528,6 +541,9 @@ reactor BTReceiver {
         setup_uart();
     =}
 
+    reaction(reply) {=
+        send_msg(reply->value);
+    =}
 }
 
 main reactor {
@@ -536,6 +552,7 @@ main reactor {
     rcvr = new BTReceiver()
 
     rcvr.command -> robot.command
+    robot.reply -> rcvr.reply
 
     robot.notify0 -> display.line0
     robot.notify1 -> display.line1
