@@ -39,8 +39,8 @@ def send_to_VLM(img,phase) :
             payload = {
                 "image": img_b64,
                 "prompt": prompt,
-                "max_tokens": 100000, #MESS AROUND WITH THIS
-                "temperature": 1.0
+                "max_tokens": 10000000000, #MESS AROUND WITH THIS
+                "temperature": 0.5
             }
             # print(payload["image"])
             start = time.perf_counter()
@@ -83,7 +83,7 @@ def get_clock_box( results):
             class_id = int(box.cls[0].cpu().numpy())
             class_name = result.names[class_id]
             
-            if class_name == "person":
+            if class_name == "clock":
                 # Get coordinates in different formats
                 xyxy = box.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
                 xywh = box.xywh[0].cpu().numpy()  # [center_x, center_y, width, height]
@@ -178,6 +178,9 @@ def test_bench():
     robot.open_connection()
     camera = cv2.VideoCapture(camera_id,cv2.CAP_DSHOW)
     
+    camera.read()
+    time.sleep(1)
+    camera.read()
     model = YOLO('yolo11n.pt')
     first_instance = True
     query=False
@@ -211,7 +214,7 @@ def test_bench():
             questions = fsm.get_relevant_questions()
 
             # if(first_instance or query):
-            while( True):
+            while(True):
                 try:
                     for key, prompt in questions.items():
                         if prompt != '':
@@ -233,6 +236,7 @@ def test_bench():
             if fsm.get_current_state() in ['DRIVETONEARESTBENCH', 'DRIVETONEARESTSTOP']:
                 # on state change, first take a small action and update robot state (to get heading)
                 if fsm.get_current_state() != prev_state:
+                    print('moving forward a little to get header')
                     commands = ll_fsm.go_forward(3)
                     for c in commands:
                         print(f"Sending command: {c}")
@@ -244,11 +248,12 @@ def test_bench():
                     ret,img = camera.read()
                     results = model(source=img, device="cpu", verbose=False)
                     robot_info = get_clock_box(results)
+
                     if(robot_info == None):
                         robot_center = Point(0,0)
                         ll_fsm.update_robot_state(robot_center)
                     else:
-                        robot_center = Point(robot_info['center'][0], robot_info['center'][1])
+                        robot_center = Point(float(robot_info['center'][0]), -1*float(robot_info['center'][1]))
                         ll_fsm.update_robot_state(robot_center)
 
                 
@@ -265,50 +270,61 @@ def test_bench():
                                f'for the clock to pass the nearest obstacle between them above or below it.')
                 
                 # requery with direction prompt:
-                direction_response = send_to_VLM(img, direction_prompt)
-                print(f"VLM Direction Response: {direction_response.json()['text']}")
+                direction_response = send_to_VLM(img, direction_prompt).json()['text']
+                print(f"VLM Direction Response: {direction_response}")
                 # get heading angle between robot and target
                 target_coords = find_item_with_id(results, target, id)
+                print(f'robot: {robot_center}, target: {target_coords}')
                 item_point = Point(target_coords[0], target_coords[1])
                 heading_to_target = robot_center.get_heading(item_point)
 
                 # choose next action based on VLM response
-                commands = []
+                all_commands = []
                 robot_heading = ll_fsm.robot_state.cur_heading
-                if direction_prompt == 'keep straight':
+                if direction_response == 'keep straight':
                     # align heading and go forward
-                    commands.extend(ll_fsm.turn_to_heading(heading_to_target))
-                elif direction_prompt == 'go left':
+                    all_commands.append(ll_fsm.turn_to_heading(heading_to_target))
+                elif direction_response == 'go left':
                     if 90 < robot_heading <= 180: # facing up
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
                     else:
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
-                elif direction_prompt == 'go right':
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+                elif direction_response == 'go right':
                     if 90 < robot_heading <= 180: # facing up
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
                     else:
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
-                elif direction_prompt == 'go up':
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+                elif direction_response == 'go up':
                     if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
                     else:
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
-                elif direction_prompt == 'go down':
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+                elif direction_response == 'go down':
                     if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
                     else:
-                        commands.extend(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
 
-                commands.extend(ll_fsm.go_forward(10))
-
+                all_commands.append(ll_fsm.go_forward(10))
+                print(f'robot header: {robot_heading}')
+                print(f'header to object: {heading_to_target}')
                 # send commands to robot
-                for command in commands:
-                    print(f"Sending command: {command}")
-                    try:
-                        robot.send_message(command)
-                    except:
-                        print("comms error")
-                    time.sleep(2) # wait for robot to process command
+                for commands in all_commands:
+                    for command in commands:
+                        print(f"Sending command: {command}")
+                        try:
+                            robot.send_message(command)
+                        except:
+                            print("comms error")
+                        time.sleep(2) # wait for robot to process command
+                
+            elif fsm.get_current_state() == 'VIEWANIMALS':
+                # block for 5 seconds and then add observation
+                print('viewing animals...')
+                time.sleep(5)
+                observation = {'waiting_time_exceeded': 'True'}
+                fsm.update_observations(observation)
+                print('done viewing animals.')
                 
             # only query again once robot stops moving
             # query = is_robot_moving(results, supposed_to_move) or not supposed_to_move

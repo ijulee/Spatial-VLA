@@ -136,11 +136,11 @@ def run_inference_sync(request: InferenceRequest):
         for prefix in prefixes_to_remove:
             if response_text.startswith(prefix):
                 response_text = response_text[len(prefix):].strip()
-                print(f"🧹 Removed prefix: '{prefix}'")
+                # print(f"🧹 Removed prefix: '{prefix}'")
 
         if "</s>" in response_text:
             response_text = response_text.split("</s>")[0].strip()
-            print("🧹 Removed </s> suffix")
+            # print("🧹 Removed </s> suffix")
         return  InferenceResponse(
             success=True,
             text=response_text

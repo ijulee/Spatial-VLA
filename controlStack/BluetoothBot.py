@@ -12,7 +12,7 @@ serial connection.
 import time
 import serial
 
-PORT = 'COM4' # REPLACE WITH CORRECT OUTGOING PORT NUMBER
+PORT = 'COM9' # REPLACE WITH CORRECT OUTGOING PORT NUMBER
 BAUD_RATE = 9600
 
 class BluetoothBot:
@@ -55,8 +55,6 @@ class BluetoothBot:
 if __name__ == "__main__":
     from LowLevelFSM import *
     
-    PORT = 'COM4'
-
     try:
         print(f"Opening Bluetooth connection...")
         robot = BluetoothBot()
