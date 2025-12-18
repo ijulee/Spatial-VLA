@@ -54,24 +54,6 @@ class InferenceResponse(BaseModel):
     text: Optional[str] = None
     error: Optional[str] = None
 
-def base64_to_opencv(base64_string: str) -> np.ndarray:
-    """Convert base64 -> OpenCV image (no file saving!)"""
-    img_bytes = base64.b64decode(base64_string)
-    nparr = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        raise ValueError("Failed to decode image")
-    
-    return img
-
-@app.post("/inference", response_model=InferenceResponse)
-async def run_inference_await(request: InferenceRequest):
-    ret = await asyncio.wait_for(run_inference(request),timeout=4.0)
-    return ret
-
-
-
 async def run_inference(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
@@ -84,7 +66,7 @@ async def run_inference(request: InferenceRequest):
         from PIL import Image
         pil_image = Image.fromarray(img_rgb)
         
-        
+
         # Prepare messages for Llama 3.2 Vision
         messages = [
             {
@@ -152,6 +134,24 @@ async def run_inference(request: InferenceRequest):
             success=False,
             error=str(e)
         )
+
+
+def base64_to_opencv(base64_string: str) -> np.ndarray:
+    """Convert base64 -> OpenCV image (no file saving!)"""
+    img_bytes = base64.b64decode(base64_string)
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        raise ValueError("Failed to decode image")
+    
+    return img
+
+@app.post("/inference", response_model=InferenceResponse)
+async def run_inference_await(request: InferenceRequest):
+    ret = await asyncio.wait_for(run_inference(request),timeout=4.0)
+    return ret
+
 
 
 @app.get("/")
