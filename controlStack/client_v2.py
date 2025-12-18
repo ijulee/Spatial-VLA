@@ -18,7 +18,7 @@ from LowLevelFSM import *
 
 toggle = 1
 SERVER_URL = "https://ik92uwhwu2vm2v-8000.proxy.runpod.net"
-SERVER_URL_ALT = "https://fvb8ktuslhknuz-8000.proxy.runpod.net/" if toggle else "https://ckse5dhl9e73el-8000.proxy.runpod.net/"
+SERVER_URL_ALT = "https://6qqiotjjckfxuz-8000.proxy.runpod.net/"
 
 img_path_test = "C:/Users/randy/Desktop/Spatial-VLA/Photos/scene_001_bus_06.png"
 import cv2 
