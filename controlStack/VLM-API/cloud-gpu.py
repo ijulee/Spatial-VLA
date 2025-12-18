@@ -84,6 +84,7 @@ async def run_inference(request: InferenceRequest):
         from PIL import Image
         pil_image = Image.fromarray(img_rgb)
         
+        
         # Prepare messages for Llama 3.2 Vision
         messages = [
             {
