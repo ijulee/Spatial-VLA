@@ -76,8 +76,13 @@ class SpatialVLMFSM:
                 self.observations[key] = value
 
         # update observation dependent questions
-        self.question_dict['at_bench'] = f'Is the robot at the bench {self.observations["target_bench"]}? Answer Yes or No.'
-        self.question_dict['at_stop'] = f'Is the robot at the zoo stop {self.observations["target_zoo"]}? Answer Yes or No.'
+        self.question_dict['at_bench'] = ('Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these '
+                        f'printed numbers as the bench IDs.  Is the clock close to bench number {self.observations["target_bench"]}? '
+                        'Respond with \'Yes\' or \'No\'.')
+        self.question_dict['at_stop'] = ('Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these '
+                       'printed numbers as the stop sign IDs. For each stop sign, consider all animals that are spatially '
+                       'closest to that stop sign. Is the clock close to the animals around stop sign number '
+                       f'{self.observations["target_zoo"]}? Respond with \'Yes\' or \'No\'.')
 
         # after updating observations, check for possible state transition
         self._do_transition()
@@ -100,13 +105,22 @@ class SpatialVLMFSM:
 
         # we can do some manual observation updates
         if prev_state == 'DRIVETONEARESTBENCH' and self.current_state == 'PICKUP':
-            self.observations['occupied_benches'].pop(0)  # remove the bench we just went to
+            self.observations['occupied_benches'].pop(0)  # remove the bench we're at
             if len(self.observations['occupied_benches']) == 0:
                 self.observations['people_waiting'] = False
-        elif prev_state == 'VIEWANIMALS' and self.current_state == 'DRIVETONEARESTSTOP':
-            self.observations['zoos_to_visit'].pop(0)  # remove the zoo we just visited
+        elif prev_state == 'DRIVETONEARESTSTOP' and self.current_state == 'VIEWANIMALS':
+            self.observations['zoos_to_visit'].pop(0)  # remove the zoo we're at
             if len(self.observations['zoos_to_visit']) == 0:
                 self.observations['all_zoos_visited'] = True
+
+        # shouldn't have to reset at_bench/at_stop since the target will be updated and requeried from VLM, but just in case.
+        elif prev_state == 'INIT' and self.current_state == 'DRIVETONEARESTBENCH':
+            # reset at_bench observation
+            self.observations['at_bench'] = False
+        elif prev_state in ('INIT', 'VIEWANIMALS') and self.current_state == 'DRIVETONEARESTSTOP':
+            # reset at_stop and waiting_time_exceeded observations
+            self.observations['at_stop'] = False
+            self.observations['waiting_time_exceeded'] = False
             
         # some observations can be derived from others
         self.observations['target_bench'] = self.observations['occupied_benches'][0] if self.observations['occupied_benches'] else None
@@ -161,6 +175,13 @@ class SpatialVLMFSM:
     def get_relevant_questions(self, keys=None):
         if keys==None:
             keys = self.get_relevant_observation_keys()
+
+        if 'all_zoos_visited' in keys:
+            keys.remove('all_zoos_visited') # don't need to query VLM for this
+        if 'waiting_time_exceeded' in keys:
+            keys.remove('waiting_time_exceeded')
+        
+
         return {key: self.question_dict[key] for key in keys if key in self.question_dict}
     
     def get_init_keys(self):

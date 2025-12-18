@@ -13,23 +13,19 @@ while True:
         break    
     
     print("Relevant Observation Keys for Next Transition:")
-    print(fsm.get_relevant_observation_keys())
-    
+    rel_keys = fsm.get_relevant_observation_keys()
+    print(rel_keys)
+
     observations = {}
-    for key in fsm.observations.keys():
+    for key in rel_keys:
         user_input = input(f"Enter value for observation '{key}' (or '' to leave unchanged): ")
-        if user_input.lower() != '':
-            # Convert input to appropriate type (bool, list, etc.)
-            if user_input.lower() in ['true', 'false']:
-                observations[key] = user_input.lower() == 'true'
-            elif user_input.startswith('[') and user_input.endswith(']'):
-                observations[key] = eval(user_input)  # Caution: using eval
-            else:
-                observations[key] = user_input
+        if user_input != '':
+            observations[key] = user_input
     fsm.update_observations(observations)
 
     # print observations
     print("Updated Observations:")
     for key, value in fsm.observations.items():
         print(f"  {key}: {value}")
+    print("target: ", fsm.get_target())
     print("------")
