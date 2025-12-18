@@ -309,6 +309,14 @@ def test_bench():
                     except:
                         print("comms error")
                     time.sleep(2) # wait for robot to process command
+
+            elif fsm.get_current_state() == 'VIEWANIMALS':
+                # block for 5 seconds and then add observation
+                print('viewing animals...')
+                time.sleep(5)
+                observation = {'waiting_time_exceeded': True}
+                fsm.update_observations(observation)
+                print('done viewing animals.')
                 
             # only query again once robot stops moving
             # query = is_robot_moving(results, supposed_to_move) or not supposed_to_move
