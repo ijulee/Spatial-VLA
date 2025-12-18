@@ -1,3 +1,4 @@
+import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import base64
@@ -65,7 +66,7 @@ class InferenceResponse(BaseModel):
 def run_inference_sync(request: InferenceRequest):
     """Main endpoint - robot sends images here"""
     try:
-        
+        start = time.perf_counter() 
         # Decode base64 -> OpenCV -> RGB -> PIL Image
         img_bgr = base64_to_opencv(request.image)
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -141,6 +142,9 @@ def run_inference_sync(request: InferenceRequest):
         if "</s>" in response_text:
             response_text = response_text.split("</s>")[0].strip()
             # print("🧹 Removed </s> suffix")
+
+        print(time.perf_counter() -start)
+        
         return  InferenceResponse(
             success=True,
             text=response_text

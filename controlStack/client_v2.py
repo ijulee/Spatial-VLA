@@ -94,11 +94,10 @@ def get_clock_box( results):
                     'class_name': class_name,
                     'xyxy': xyxy,  # Corners [x1, y1, x2, y2]
                     'xywh': xywh,  # Center format [cx, cy, w, h]
-                    'center': (float(xywh[0]), float(xywh[1])),
+                    'center': ((xywh[0]), (xywh[1])),
                     'confidence': confidence,
                     'bbox': [float(x) for x in xyxy]  # For collision detection
                 }
-    
     return None
 
 
@@ -108,7 +107,6 @@ def getCoords(results,response) -> dict:
     coords = {"x":0,"y": 0}
 
     clock_meta_data = get_clock_box(results)
-    # print(json.loads(response['text']))
     print("TEST:" ,type(response['text']))
     try:
         coords = json.loads(response['text'])
@@ -131,16 +129,20 @@ def find_item_with_id(results, item_label, id):
 
                 if label == item_label:
                     xywh = box.xywh[0].cpu().numpy()  # [center_x, center_y, width, height]
-                    item_coords.append((float(xywh[0]), float(xywh[1])))
+                    item_coords.append(((xywh[0]).astype(float), (xywh[1]).astype(float)))
 
         # Sort items from left to right based on x-coordinate
         item_coords.sort(key=lambda coord: coord[0])
 
+        if item_label == 'stop sign':
+            return item_coords[0]
+
         # Return the centroid with the given id (1-indexed)
         if 1 <= id <= len(item_coords):
             return item_coords[id - 1]
+        
         else:
-            return (0,0)
+            return item_coords[-1]
 
     except:
         print("error detecting objects")
@@ -188,9 +190,18 @@ def test_bench():
     triangulate = False
     heading_data = {"x1": 0, "y1" : 0,  "x2": 0, "y2": 0}
     vlm_observations = {}
+    # camera.set(CV_CAP_PROP_BUFFERSIZE, 3)
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 0)
+
     # print(fsm.get_relevant_questions())   
     while fsm.get_current_state() != "END":
+        start = time.perf_counter()
+        for _ in range(700):
+            camera.grab()
+            # display(img)
         ret,img  = camera.read()
+        print(time.perf_counter()-start)
+
 
         if(ret == None):
             print("Something went wrong lol")
@@ -208,7 +219,7 @@ def test_bench():
             robot_info = get_clock_box(results)
             if(robot_info != None):
 
-                robot_center = Point(robot_info['center'][0], robot_info['xywh'][1])
+                robot_center = Point(float(robot_info['center'][0]), float(-1*robot_info['center'][1]))
                 ll_fsm.update_robot_state(robot_center)
 
             questions = fsm.get_relevant_questions()
@@ -245,20 +256,29 @@ def test_bench():
                         except:
                             print("comms eror")
                         time.sleep(1) # wait for robot to process command
+                    for _ in range(700):
+                        camera.grab()
+                        # display(img)
+
                     ret,img = camera.read()
                     results = model(source=img, device="cpu", verbose=False)
+
+                    # cv2.imshow(results[0].plot())
+                    display(results[0].plot())
+
                     robot_info = get_clock_box(results)
 
                     if(robot_info == None):
                         robot_center = Point(0,0)
                         ll_fsm.update_robot_state(robot_center)
                     else:
-                        robot_center = Point(float(robot_info['center'][0]), -1*float(robot_info['center'][1]))
+                        temp_y = -1*float(robot_info['center'][1])
+                        robot_center = Point(float(robot_info['center'][0]), temp_y)
                         ll_fsm.update_robot_state(robot_center)
 
                 
                 target,id = fsm.get_target()
-                supposed_to_move = True
+                # supposed_to_move = True
                 direction_prompt = (f'Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
                                f'Use these printed numbers as the stop sign IDs. For {target} number {id}, choose the best '
                                f'direction for the clock to move to reach that {target} while avoiding obstacles between them. '
@@ -272,10 +292,9 @@ def test_bench():
                 # requery with direction prompt:
                 direction_response = send_to_VLM(img, direction_prompt).json()['text']
                 print(f"VLM Direction Response: {direction_response}")
-                # get heading angle between robot and target
                 target_coords = find_item_with_id(results, target, id)
                 print(f'robot: {robot_center}, target: {target_coords}')
-                item_point = Point(target_coords[0], target_coords[1])
+                item_point = Point(target_coords[0], -1*target_coords[1])
                 heading_to_target = robot_center.get_heading(item_point)
 
                 # choose next action based on VLM response
@@ -285,12 +304,12 @@ def test_bench():
                     # align heading and go forward
                     all_commands.append(ll_fsm.turn_to_heading(heading_to_target))
                 elif direction_response == 'go left':
-                    if 90 < robot_heading <= 180: # facing up
+                    if 0 < robot_heading <= 180: # facing up
                         all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
                     else:
                         all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
                 elif direction_response == 'go right':
-                    if 90 < robot_heading <= 180: # facing up
+                    if 0 < robot_heading <= 180: # facing up
                         all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
                     else:
                         all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW

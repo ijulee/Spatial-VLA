@@ -14,7 +14,7 @@ class SpatialVLMFSM:
             'at_bench': None,
             'at_stop': None,
             'people_waiting_current_bench': None,
-            'target_zoo': -1,
+            'target_zoo': 1,
             'zoos_to_visit': [],
             'all_zoos_visited': None,
             'waiting_time_exceeded': None,
@@ -38,8 +38,8 @@ class SpatialVLMFSM:
                                 'furthest from the clock, separated by commas. For example, \'2, 1, 4, 3\'.',
 
             'target_bench': 'Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
-                            'Use these printed numbers as the bench IDs. Which bench is closest to the clock? '
-                            'Answer with the bench ID.', # shouldn't be asked directly (we keep track of it here)
+                            'Use these printed numbers as the bench IDs. Which bench is closest to the clock that '
+                            'has at least one person at it? Answer the bench ID. If no benches have people, respond with \'0\'.', 
 
             'at_bench': 'Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these '
                         f'printed numbers as the bench IDs.  Is the clock close to bench number {self.observations["target_bench"]}? '
@@ -84,6 +84,9 @@ class SpatialVLMFSM:
                        'closest to that stop sign. Is the clock close to the animals around stop sign number '
                        f'{self.observations["target_zoo"]}? Respond with \'Yes\' or \'No\'.')
 
+        # manually set zoos to visit
+        self.observations['zoos_to_visit'] = [1]
+
         # after updating observations, check for possible state transition
         self._do_transition()
 
@@ -104,11 +107,12 @@ class SpatialVLMFSM:
                 self.current_state = new_state
 
         # we can do some manual observation updates
-        if prev_state == 'DRIVETONEARESTBENCH' and self.current_state == 'PICKUP':
-            self.observations['occupied_benches'].pop(0)  # remove the bench we're at
-            if len(self.observations['occupied_benches']) == 0:
-                self.observations['people_waiting'] = False
-        elif prev_state == 'DRIVETONEARESTSTOP' and self.current_state == 'VIEWANIMALS':
+        # if prev_state == 'DRIVETONEARESTBENCH' and self.current_state == 'PICKUP':
+            # self.observations['occupied_benches'].pop(0)  # remove the bench we're at
+            # if len(self.observations['occupied_benches']) == 0:
+            #     self.observations['people_waiting'] = False
+
+        if prev_state == 'DRIVETONEARESTSTOP' and self.current_state == 'VIEWANIMALS':
             self.observations['zoos_to_visit'].pop(0)  # remove the zoo we're at
             if len(self.observations['zoos_to_visit']) == 0:
                 self.observations['all_zoos_visited'] = True
@@ -123,7 +127,6 @@ class SpatialVLMFSM:
             self.observations['waiting_time_exceeded'] = False
             
         # some observations can be derived from others
-        self.observations['target_bench'] = self.observations['occupied_benches'][0] if self.observations['occupied_benches'] else None
         self.observations['target_zoo'] = self.observations['zoos_to_visit'][0] if self.observations['zoos_to_visit'] else None
         self.observations['all_zoos_visited'] = len(self.observations['zoos_to_visit']) == 0
 
@@ -165,8 +168,9 @@ class SpatialVLMFSM:
                 if self.current_state in ('INIT', 'PICKUP'):
                     if self.observations['people_waiting'] or self.observations['people_waiting'] is None:
                         # also need to get occupied_benches and zoos_to_visit
-                        keys.append('occupied_benches')
-                    elif self.current_state == 'INIT' and not self.observations['people_waiting']:
+                        keys.append('people_waiting')
+                        keys.append('target_bench')
+                    # elif self.current_state == 'INIT' and not self.observations['people_waiting']:
                         keys.append('zoos_to_visit')
                 return keys
         return []
@@ -194,5 +198,3 @@ class SpatialVLMFSM:
         elif self.current_state in ['DRIVETONEARESTSTOP', 'VIEWANIMALS']:
             return ('stop sign', self.observations['target_zoo'])
         return (None, None)
-
-
