@@ -9,6 +9,7 @@ import numpy as np
 import requests
 import base64
 import io
+import threading
 import cv2
 from PIL import Image
 import time
@@ -18,12 +19,34 @@ from LowLevelFSM import *
 
 toggle = 1
 SERVER_URL = "https://ik92uwhwu2vm2v-8000.proxy.runpod.net"
-SERVER_URL_ALT = "https://fvb8ktuslhknuz-8000.proxy.runpod.net/" if toggle else "https://ckse5dhl9e73el-8000.proxy.runpod.net/"
-
+SERVER_URL_ALT = "https://6qqiotjjckfxuz-8000.proxy.runpod.net/"
 img_path_test = "C:/Users/randy/Desktop/Spatial-VLA/Photos/scene_001_bus_06.png"
 import cv2 
 from ultralytics import YOLO
 
+
+class CameraStream:
+    def __init__(self, src=0):
+        self.stream = cv2.VideoCapture(src,cv2.CAP_DSHOW)
+        (self.grabbed, self.frame) = self.stream.read()
+        self.stopped = False
+
+    def start(self):
+        threading.Thread(target=self.update, args=()).start()
+        return self
+
+    def update(self):
+        while not self.stopped:
+            if not self.grabbed:
+                self.stop()
+            else:
+                (self.grabbed, self.frame) = self.stream.read()
+
+    def read(self):
+        return self.frame
+
+    def stop(self):
+        self.stopped = True
 
 def send_to_VLM(img,phase) :
     # img = cv2.imread(img_path_test,cv2.IMREAD_COLOR)
@@ -173,12 +196,13 @@ def test_bench():
     # print(response)
     fsm = FSM.SpatialVLMFSM()
     ll_fsm = LowLevelFSM(Point(0,0))
+    camera = CameraStream(1).start()
     # state = local_fsm.get_current_state()
     # print(state)
     camera_id = 1
     robot =  BluetoothBot.BluetoothBot()
     robot.open_connection()
-    camera = cv2.VideoCapture(camera_id,cv2.CAP_DSHOW)
+    # camera = cv2.VideoCapture(camera_id,cv2.CAP_DSHOW)
     
     camera.read()
     time.sleep(1)
@@ -191,19 +215,21 @@ def test_bench():
     heading_data = {"x1": 0, "y1" : 0,  "x2": 0, "y2": 0}
     vlm_observations = {}
     # camera.set(CV_CAP_PROP_BUFFERSIZE, 3)
-    camera.set(cv2.CAP_PROP_BUFFERSIZE, 0)
+    # camera.set(cv2.CAP_PROP_BUFFERSIZE, 0)
 
     # print(fsm.get_relevant_questions())   
     while fsm.get_current_state() != "END":
         start = time.perf_counter()
-        for _ in range(700):
-            camera.grab()
+        # for _ in range(700):
+        #     camera.grab()
             # display(img)
-        ret,img  = camera.read()
+        img  = camera.read()
+        display(img)
         print(time.perf_counter()-start)
+        start = time.perf_counter()
 
-
-        if(ret == None):
+        # if(ret == None):
+        if (False):
             print("Something went wrong lol")
         else:
             results = model(
@@ -211,9 +237,11 @@ def test_bench():
                 device="cpu",  #Cuda device (gpu)
                 verbose=False #shuts it up
             )
+            print("YOLO LATENCY" + str(time.perf_counter()-start))
 
             boxed_img =  results[0].plot()
             display(boxed_img)
+
 
             # get / update robot position
             robot_info = get_clock_box(results)
@@ -256,11 +284,11 @@ def test_bench():
                         except:
                             print("comms eror")
                         time.sleep(1) # wait for robot to process command
-                    for _ in range(700):
-                        camera.grab()
+                    # for _ in range(700):
+                    #     camera.grab()
                         # display(img)
 
-                    ret,img = camera.read()
+                    img = camera.read()
                     results = model(source=img, device="cpu", verbose=False)
 
                     # cv2.imshow(results[0].plot())

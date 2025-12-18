@@ -20,7 +20,7 @@ class LowLevelFSM:
     
     def turn_to_heading(self, new_heading):
         heading_diff = get_heading_diff(self.robot_state.cur_heading, new_heading)
-        turn_direction = 'r' if heading_diff > 0 else 'l'
+        turn_direction = 'r' if heading_diff < 0 else 'l'
         
         return [f"{turn_direction},{TURN_SPEED},{int(abs(heading_diff))}",]
     
