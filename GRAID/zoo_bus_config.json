@@ -1,0 +1,59 @@
+{
+  "dataset_name": "zoo_bus",
+  "split": "train",
+
+  "image_root": "../source_images",
+  "save_path": "./datasets/zoo_bus_vqa",
+
+  "models": [
+    {
+      "backend": "ultralytics",
+      "model_path": "./yolo12s.pt",
+      "confidence_threshold": 0.2
+    }
+  ],
+
+  "use_wbf": false,
+
+  "allowable_set": [
+    "person",
+    "bench",
+    "clock",
+    "giraffe",
+    "elephant",
+    "zebra",
+    "stop sign"
+  ],
+
+  "confidence_threshold": 0.2,
+  "batch_size": 4,
+  "num_workers": 4,
+  "qa_workers": 4,
+  "num_samples": null,
+
+  "questions": [
+    { "name": "OneOrMorePeople", "params": {} },
+    { "name": "PersonAtClosestBench", "params": {} },
+
+    { "name": "IsPersonAtBench", "params": {} },
+    { "name": "ClosestBench", "params": {} },
+    { "name": "ClosestStopSigns", "params": {} },
+
+    { "name": "ClosestToFurthestBenches", "params": {} },
+    { "name": "ClosestToFurthestStopSigns", "params": {} },
+    { "name": "ClosestBenchWithPerson", "params": {} },
+    { "name": "ArrivedAtBench", "params": {"dist_threshold": 190} },
+    { "name": "ArrivedAtAnimalsAroundStopSigns", "params": {"dist_threshold": 190} },
+    
+    { "name": "PathBlockedBetweenBusAndBench", "params": {} },
+    { "name": "PathBlockedBetweenBusAndStopSign", "params": {} }
+  ],
+
+  "transforms": {
+    "resize_longest_side": 1280
+  },
+
+  "upload_to_hub": false,
+  "hub_repo_id": "",
+  "hub_private": true
+}
