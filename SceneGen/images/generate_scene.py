@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 import numpy as np
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 from ultralytics import YOLO
 
 # ========= TUNABLE PARAMETERS =========
@@ -60,6 +60,12 @@ BUS_ROTATE = True                       # Randomly rotate bus or not
 BUS_DIFF_THRESHOLD = 8                  # Threshold for "blank" region detection (vs pure background)
 BUS_MAX_PLACEMENT_TRIES = 200           # Max tries to find a blank region for each bus
 BUS_MIN_CENTER_DIST = 150.0             # Min distance between bus centers across variants of the same base scene
+
+# Heading dot parameters (red circle drawn in front of the bus to indicate heading direction)
+# Unrotated bus sprite is assumed to face UP (negative-y direction).
+BUS_HEADING_DOT_OFFSET = 215            # Distance from bus center to dot center (pixels, before resize)
+BUS_HEADING_DOT_RADIUS = 45            # Radius of heading dot (pixels, before resize)
+BUS_HEADING_DOT_COLOR = (220, 30, 30, 255)  # RGBA: vivid red, fully opaque
 
 # YOLO filtering (must satisfy counts to save)
 YOLO_WEIGHTS = "yolo12s.pt"
@@ -510,6 +516,20 @@ def add_bus_variants_for_one_scene(
 
         out = base.copy()
         out.alpha_composite(rotated, (int(cx - ow / 2.0), int(cy - oh / 2.0)))
+
+        # Draw heading dot: red circle in front of the bus.
+        # PIL rotate(angle) is CCW visually; unrotated front = UP = (0, -1).
+        # After CCW rotation by angle degrees, front direction = (-sin θ, -cos θ).
+        theta_rad = math.radians(angle if BUS_ROTATE else 0.0)
+        front_dx = -math.sin(theta_rad)
+        front_dy = -math.cos(theta_rad)
+        dot_cx = cx + front_dx * BUS_HEADING_DOT_OFFSET
+        dot_cy = cy + front_dy * BUS_HEADING_DOT_OFFSET
+        r = BUS_HEADING_DOT_RADIUS
+        ImageDraw.Draw(out).ellipse(
+            [dot_cx - r, dot_cy - r, dot_cx + r, dot_cy + r],
+            fill=BUS_HEADING_DOT_COLOR,
+        )
 
         # Resize: long side -> 1280
         w, h = out.size

@@ -276,6 +276,10 @@ def assign_objects_to_location(object_centroids, location_centroids):
 
     return location_occupancy
 
+'''
+Group #1 Questions
+'''
+
 class OneOrMorePeople(Question):
     def __init__(self) -> None:
         super().__init__(
@@ -300,6 +304,461 @@ class OneOrMorePeople(Question):
                     break
 
         return [(self.question, "Yes" if has_person else "No")]
+
+class CountPeople(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question="How many people are currently visible in this scene? Respond with only an integer.",
+            variables=[],
+            predicates=[
+                lambda image, detections: len(detections) > 0,
+            ],
+        )
+
+    def apply(self, image, detections):
+        count = 0
+        for det in detections:
+            lbl = det.label
+            if isinstance(lbl, torch.Tensor):
+                for l in lbl:
+                    if str(l) == "person":
+                        count += 1
+            else:
+                if str(lbl) == "person":
+                    count += 1
+        return [(self.question, str(count))]
+
+class CountOccupiedBenches(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question="How many benches currently have one or more passengers? Respond with only an integer.",
+            variables=[],
+            predicates=[
+                lambda image, detections: len(detections) > 0,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person"])
+        benches = labeled_bboxes["bench"]
+        persons = labeled_bboxes["person"]
+
+        if len(benches) == 0:
+            return []
+
+        if len(persons) == 0:
+            return [(self.question, "0")]
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        person_centroids = [centroid(bbox) for bbox in persons]
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
+        count = sum(1 for occ in bench_occupancy if occ > 0)
+        return [(self.question, str(count))]
+
+class CountBenchesWithAtLeastKPeople(Question):
+    def __init__(self, k: int = 2) -> None:
+        if k < 1:
+            raise ValueError("k must be at least 1")
+        self.k = k
+        super().__init__(
+            question=f"How many benches have at least {k} passengers? Respond with only an integer.",
+            variables=[],
+            predicates=[
+                lambda image, detections: len(detections) > 0,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person"])
+        benches = labeled_bboxes["bench"]
+        persons = labeled_bboxes["person"]
+
+        if len(benches) == 0:
+            return []
+
+        if len(persons) == 0:
+            return [(self.question, "0")]
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        person_centroids = [centroid(bbox) for bbox in persons]
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
+        count = sum(1 for occ in bench_occupancy if occ >= self.k)
+        return [(self.question, str(count))]
+
+'''
+Group #2 Questions
+'''
+
+class IsPersonAtBench(Question):
+    def __init__(self) -> None:
+        """Create an *Is-Person-At-Bench-X* question."""
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Is there a person at bench #{bench_number}? Respond with 'Yes' or 'No'."
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        # Collect bench and person detections
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person"])
+        benches = labeled_bboxes["bench"]
+        persons = labeled_bboxes["person"]
+
+        # If no benches or no persons are detected, the question is not applicable
+        if len(benches) == 0 or len(persons) == 0:
+            return []
+
+        # Compute centroids for benches and persons
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        person_centroids = [centroid(bbox) for bbox in persons]
+
+        bench_widths = [bbox[2] - bbox[0] for bbox in benches]
+        # Number benches from left to right, breaking horizontal ties using width-based threshold
+        bench_order = sort_indices_strict_left_to_right(
+            bench_centroids
+        )
+
+        # Assign each person to the nearest bench (in Euclidean distance)
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
+
+        # For each bench in the left-to-right order, generate a Yes/No QA pair
+        qas = []
+        for rank, bench_idx in enumerate(bench_order):
+            question = self.question.format(bench_number=rank + 1)
+            answer = "Yes" if bench_occupancy[bench_idx] > 0 else "No"
+            qas.append((question, answer))
+
+        return qas
+
+class IsBenchEmpty(Question):
+    def __init__(self) -> None:
+        """Create an *Is-Bench-X-Empty* question (complement of IsPersonAtBench)."""
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Is bench #{bench_number} empty (no people around)? Respond with 'Yes' or 'No'."
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person"])
+        benches = labeled_bboxes["bench"]
+        persons = labeled_bboxes["person"]
+
+        if len(benches) == 0:
+            return []
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+
+        if len(persons) == 0:
+            # No persons in scene: all benches are empty
+            return [
+                (self.question.format(bench_number=rank + 1), "Yes")
+                for rank in range(len(bench_order))
+            ]
+
+        person_centroids = [centroid(bbox) for bbox in persons]
+        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
+
+        qas = []
+        for rank, bench_idx in enumerate(bench_order):
+            question = self.question.format(bench_number=rank + 1)
+            answer = "Yes" if bench_occupancy[bench_idx] == 0 else "No"
+            qas.append((question, answer))
+        return qas
+
+class ArrivedAtBench(Question):
+    def __init__(self, dist_threshold: float) -> None:
+        """Question: has the bus arrived at each bench (numbered left-to-right)?"""
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Is the clock close to bench number {bench_number}? Respond with 'Yes' or 'No'. "
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+        self.dist_threshold: float = dist_threshold
+
+    def apply(self, image, detections):
+        """
+        For each bench, numbered from left to right (with horizontal ties broken
+        by vertical position), ask whether the bus (clock) has "arrived" at it.
+
+        A bench is considered "arrived" if the Euclidean distance between the
+        bus center and the bench center is strictly less than `self.dist_threshold`.
+        """
+        # Collect benches and bus (clock) detections
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
+        benches = labeled_bboxes.get("bench", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        # If no benches or no bus is detected, the question is not applicable
+        if len(benches) == 0 or len(clocks) == 0:
+            return []
+
+        # Use the first clock as the bus marker
+        bus_bbox = clocks[0]
+
+        # Compute centroids
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bus_centroid = centroid(bus_bbox)
+
+        bench_widths = [bbox[2] - bbox[0] for bbox in benches]
+        # Number benches from left to right, breaking horizontal ties using width-based threshold
+        bench_order = sort_indices_strict_left_to_right(
+            bench_centroids
+        )
+
+        # Pre-compute distances from each bench to the bus
+        bus_c = np.array(bus_centroid)
+        bench_distances = [
+            np.linalg.norm(np.array(bench_centroids[i]) - bus_c)
+            for i in range(len(benches))
+        ]
+
+        qas: list[tuple[str, str]] = []
+        for rank, bench_idx in enumerate(bench_order):
+            question = self.question.format(bench_number=rank + 1)
+            answer = "Yes" if bench_distances[bench_idx] < self.dist_threshold else "No"
+            qas.append((question, answer))
+
+        return qas
+
+class ArrivedAtAnimalsAroundStopSigns(Question):
+    def __init__(self, dist_threshold: float) -> None:
+        """
+        Does the bus (clock) arrive at the animals around each left-to-right
+        numbered stop sign?
+        """
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "For each stop sign, consider all animals that are spatially closest to that stop sign. "
+                "Is the clock close to the animals around stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+        # Distance threshold in pixels: distance from the clock to the nearest animal
+        # in the group associated with a given stop sign.
+        self.dist_threshold: float = dist_threshold
+
+    def apply(self, image, detections):
+        """
+        1. Number all stop signs from left to right (with a vertical tie-break).
+        2. Assign each animal (elephant, giraffe, zebra) to its nearest stop sign,
+           forming an animal group around each stop sign.
+        3. For each stop sign, compute the minimum distance from the clock to
+           any animal in its group. If this distance is below dist_threshold,
+           answer 'Yes'; otherwise, answer 'No'.
+        """
+        # We only care about stop signs, the clock, and the three animal categories
+        target_labels = ["stop sign", "clock", "elephant", "giraffe", "zebra"]
+        labeled_bboxes = collect_detections_by_label(detections, target_labels)
+
+        stop_signs = labeled_bboxes.get("stop sign", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        # Collect all animal bounding boxes (elephant, giraffe, zebra)
+        animal_bboxes: List[Tuple[float, float, float, float]] = []
+        for lbl in ("elephant", "giraffe", "zebra"):
+            animal_bboxes.extend(labeled_bboxes.get(lbl, []))
+
+        # If there are no stop signs, no clock, or no animals, do not generate questions
+        if len(stop_signs) == 0 or len(clocks) == 0 or len(animal_bboxes) == 0:
+            return []
+
+        # Use the first clock as the bus position
+        bus_bbox = clocks[0]
+        bus_centroid = centroid(bus_bbox)
+        bus_c = np.array(bus_centroid)
+
+        # Compute centroids and widths for all stop signs
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        stop_sign_widths = [bbox[2] - bbox[0] for bbox in stop_signs]
+
+        # Number stop signs from left to right with a vertical tie-break,
+        # using a width-based epsilon (e.g., within 0.5 × max(width_i, width_j))
+        stop_sign_order = sort_indices_strict_left_to_right(
+            stop_sign_centroids
+        )
+
+        # Compute centroids for all animals
+        animal_centroids = [centroid(bbox) for bbox in animal_bboxes]
+
+        # Assign each animal to its nearest stop sign
+        animals_per_stop_sign: List[List[int]] = [[] for _ in range(len(stop_signs))]
+        for a_idx, ac in enumerate(animal_centroids):
+            dists = [
+                np.linalg.norm(np.array(ac) - np.array(sc))
+                for sc in stop_sign_centroids
+            ]
+            nearest_stop = int(np.argmin(dists))
+            animals_per_stop_sign[nearest_stop].append(a_idx)
+
+        # Precompute the minimum distance from the clock to the animals
+        # around each stop sign. If a stop sign has no animals, the distance
+        # remains +inf and the answer will be 'No'.
+        min_dist_to_animals = [float("inf")] * len(stop_signs)
+        for s_idx, animal_indices in enumerate(animals_per_stop_sign):
+            if not animal_indices:
+                continue
+            dists = [
+                np.linalg.norm(np.array(animal_centroids[a_idx]) - bus_c)
+                for a_idx in animal_indices
+            ]
+            min_dist_to_animals[s_idx] = min(dists)
+
+        # Generate QA pairs in the left-to-right order of stop signs
+        qas: List[Tuple[str, str]] = []
+        for rank, stop_sign_idx in enumerate(stop_sign_order):
+            question = self.question.format(stop_sign_number=rank + 1)
+            d = min_dist_to_animals[stop_sign_idx]
+            answer = "Yes" if d < self.dist_threshold else "No"
+            qas.append((question, answer))
+
+        return qas
+
+'''
+Group #3 Questions
+'''
+
+class ClosestBench(Question):
+    def __init__(self) -> None:
+        """
+        Ask: after numbering all benches from left to right (with a vertical tie-break),
+        which bench is closest to the bus (clock)? Answer is a single integer.
+        """
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Which bench is closest to the clock? "
+                "Answer with the bench ID."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        # Only benches and the bus (clock) are needed
+        labeled_bboxes = collect_detections_by_label(
+            detections, ["bench", "clock"]
+        )
+
+        benches = labeled_bboxes.get("bench", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        # If no benches or no bus, do not generate this question
+        if len(benches) == 0 or len(clocks) == 0:
+            return []
+
+        # Use the first clock as the bus position
+        bus_bbox = clocks[0]
+        bus_centroid = centroid(bus_bbox)
+
+        # Geometry for benches
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bench_widths = [bbox[2] - bbox[0] for bbox in benches]
+
+        # 1) Number benches from left to right, with vertical tie-break
+        bench_order = sort_indices_strict_left_to_right(
+            bench_centroids
+        )
+
+        # Map detection index -> bench number (1, 2, 3, ...)
+        idx_to_number = {
+            idx: num for num, idx in enumerate(bench_order, start=1)
+        }
+
+        # 2) Find the bench closest to the bus (clock)
+        bus_c = np.array(bus_centroid)
+        bench_distances = [
+            np.linalg.norm(np.array(c) - bus_c) for c in bench_centroids
+        ]
+        closest_idx = int(np.argmin(bench_distances))
+
+        # 3) Convert its detection index to the left-to-right bench number
+        answer_number = idx_to_number[closest_idx]
+
+        return [(self.question, str(answer_number))]
+
+class ClosestStopSigns(Question):
+    def __init__(self) -> None:
+        """
+        Ask: after numbering all stop signs from left to right (with a vertical tie-break),
+        which stop sign is closest to the bus (clock)? Answer is a single integer.
+        """
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "Which stop sign is closest to the clock? "
+                "Answer with its ID."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        # Only stop signs and the bus (clock) are needed
+        labeled_bboxes = collect_detections_by_label(
+            detections, ["stop sign", "clock"]
+        )
+
+        stop_signs = labeled_bboxes.get("stop sign", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        # If no stop signs or no bus, do not generate this question
+        if len(stop_signs) == 0 or len(clocks) == 0:
+            return []
+
+        # Use the first clock as the bus position
+        bus_bbox = clocks[0]
+        bus_centroid = centroid(bus_bbox)
+
+        # Geometry for stop signs
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        stop_sign_widths = [bbox[2] - bbox[0] for bbox in stop_signs]
+
+        # 1) Number stop signs from left to right, with vertical tie-break
+        stop_sign_order = sort_indices_strict_left_to_right(
+            stop_sign_centroids
+        )
+
+        # Map detection index -> stop sign number (1, 2, 3, ...)
+        idx_to_number = {
+            idx: num for num, idx in enumerate(stop_sign_order, start=1)
+        }
+
+        # 2) Find the stop sign closest to the bus (clock)
+        bus_c = np.array(bus_centroid)
+        stop_sign_distances = [
+            np.linalg.norm(np.array(c) - bus_c) for c in stop_sign_centroids
+        ]
+        closest_idx = int(np.argmin(stop_sign_distances))
+
+        # 3) Convert its detection index to the left-to-right stop sign number
+        answer_number = idx_to_number[closest_idx]
+
+        return [(self.question, str(answer_number))]
 
 class PersonAtClosestBench(Question):
     def __init__(self) -> None:
@@ -412,63 +871,12 @@ class ClosestBenchWithPerson(Question):
         # No benches have people
         return [(self.question, "0")]
 
-class IsPersonAtBench(Question):
+class FurthestBench(Question):
     def __init__(self) -> None:
-        """Create an *Is-Person-At-Bench-X* question."""
         super().__init__(
             question=(
                 "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
-                "Is there a person at bench number {bench_number}? Respond with 'Yes' or 'No'."
-            ),
-            variables=["bench_number"],
-            predicates=[
-                ObjectDetectionPredicates.at_least_one_single_detection,
-            ],
-        )
-
-    def apply(self, image, detections):
-        # Collect bench and person detections
-        labeled_bboxes = collect_detections_by_label(detections, ["bench", "person"])
-        benches = labeled_bboxes["bench"]
-        persons = labeled_bboxes["person"]
-
-        # If no benches or no persons are detected, the question is not applicable
-        if len(benches) == 0 or len(persons) == 0:
-            return []
-
-        # Compute centroids for benches and persons
-        bench_centroids = [centroid(bbox) for bbox in benches]
-        person_centroids = [centroid(bbox) for bbox in persons]
-
-        bench_widths = [bbox[2] - bbox[0] for bbox in benches]
-        # Number benches from left to right, breaking horizontal ties using width-based threshold
-        bench_order = sort_indices_strict_left_to_right(
-            bench_centroids
-        )
-
-        # Assign each person to the nearest bench (in Euclidean distance)
-        bench_occupancy = assign_objects_to_location(person_centroids, bench_centroids)
-
-        # For each bench in the left-to-right order, generate a Yes/No QA pair
-        qas = []
-        for rank, bench_idx in enumerate(bench_order):
-            question = self.question.format(bench_number=rank + 1)
-            answer = "Yes" if bench_occupancy[bench_idx] > 0 else "No"
-            qas.append((question, answer))
-
-        return qas
-
-class ClosestBench(Question):
-    def __init__(self) -> None:
-        """
-        Ask: after numbering all benches from left to right (with a vertical tie-break),
-        which bench is closest to the bus (clock)? Answer is a single integer.
-        """
-        super().__init__(
-            question=(
-                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
-                "Which bench is closest to the clock? "
-                "Answer with the bench ID."
+                "Which bench is furthest from the clock? Respond with only the bench number."
             ),
             variables=[],
             predicates=[
@@ -477,47 +885,109 @@ class ClosestBench(Question):
         )
 
     def apply(self, image, detections):
-        # Only benches and the bus (clock) are needed
-        labeled_bboxes = collect_detections_by_label(
-            detections, ["bench", "clock"]
-        )
-
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
         benches = labeled_bboxes.get("bench", [])
         clocks = labeled_bboxes.get("clock", [])
 
-        # If no benches or no bus, do not generate this question
         if len(benches) == 0 or len(clocks) == 0:
             return []
 
-        # Use the first clock as the bus position
-        bus_bbox = clocks[0]
-        bus_centroid = centroid(bus_bbox)
-
-        # Geometry for benches
-        bench_centroids = [centroid(bbox) for bbox in benches]
-        bench_widths = [bbox[2] - bbox[0] for bbox in benches]
-
-        # 1) Number benches from left to right, with vertical tie-break
-        bench_order = sort_indices_strict_left_to_right(
-            bench_centroids
-        )
-
-        # Map detection index -> bench number (1, 2, 3, ...)
-        idx_to_number = {
-            idx: num for num, idx in enumerate(bench_order, start=1)
-        }
-
-        # 2) Find the bench closest to the bus (clock)
+        bus_centroid = centroid(clocks[0])
         bus_c = np.array(bus_centroid)
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+        idx_to_number = {idx: num for num, idx in enumerate(bench_order, start=1)}
+
         bench_distances = [
             np.linalg.norm(np.array(c) - bus_c) for c in bench_centroids
         ]
-        closest_idx = int(np.argmin(bench_distances))
+        furthest_idx = int(np.argmax(bench_distances))
+        return [(self.question, str(idx_to_number[furthest_idx]))]
 
-        # 3) Convert its detection index to the left-to-right bench number
-        answer_number = idx_to_number[closest_idx]
+class FurthestStopSign(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "Which stop sign is furthest from the clock? Respond with only the stop sign number."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
 
-        return [(self.question, str(answer_number))]
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "clock"])
+        stop_signs = labeled_bboxes.get("stop sign", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        if len(stop_signs) == 0 or len(clocks) == 0:
+            return []
+
+        bus_centroid = centroid(clocks[0])
+        bus_c = np.array(bus_centroid)
+
+        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
+        stop_sign_order = sort_indices_strict_left_to_right(stop_sign_centroids)
+        idx_to_number = {idx: num for num, idx in enumerate(stop_sign_order, start=1)}
+
+        stop_sign_distances = [
+            np.linalg.norm(np.array(c) - bus_c) for c in stop_sign_centroids
+        ]
+        furthest_idx = int(np.argmax(stop_sign_distances))
+        return [(self.question, str(idx_to_number[furthest_idx]))]
+
+class PairwiseCloserBench(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Which is closer to the clock, bench #{bench_i} or bench #{bench_j}? Respond with only the bench number."
+            ),
+            variables=["bench_i", "bench_j"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
+        benches = labeled_bboxes.get("bench", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        if len(benches) < 2 or len(clocks) == 0:
+            return []
+
+        bus_centroid = centroid(clocks[0])
+        bus_c = np.array(bus_centroid)
+
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+        idx_to_number = {idx: num for num, idx in enumerate(bench_order, start=1)}
+        number_to_idx = {num: idx for idx, num in idx_to_number.items()}
+
+        bench_distances = [
+            np.linalg.norm(np.array(c) - bus_c) for c in bench_centroids
+        ]
+
+        bench_numbers = sorted(idx_to_number.values())
+        qas = []
+        for a in range(len(bench_numbers)):
+            for b in range(a + 1, len(bench_numbers)):
+                num_i = bench_numbers[a]
+                num_j = bench_numbers[b]
+                dist_i = bench_distances[number_to_idx[num_i]]
+                dist_j = bench_distances[number_to_idx[num_j]]
+                answer = str(num_i) if dist_i <= dist_j else str(num_j)
+                question = self.question.format(bench_i=num_i, bench_j=num_j)
+                qas.append((question, answer))
+        return qas
+
+'''
+Group #4 Questions
+'''
 
 class ClosestToFurthestBenches(Question):
     def __init__(self) -> None:
@@ -580,127 +1050,6 @@ class ClosestToFurthestBenches(Question):
         ]
 
         return [(self.question, ", ".join(map(str, idx_by_distance)))]
-    
-class ArrivedAtBench(Question):
-    def __init__(self, dist_threshold: float) -> None:
-        """Question: has the bus arrived at each bench (numbered left-to-right)?"""
-        super().__init__(
-            question=(
-                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
-                "Is the clock close to bench number {bench_number}? Respond with 'Yes' or 'No'. "
-            ),
-            variables=["bench_number"],
-            predicates=[
-                ObjectDetectionPredicates.at_least_one_single_detection,
-            ],
-        )
-        self.dist_threshold: float = dist_threshold
-
-    def apply(self, image, detections):
-        """
-        For each bench, numbered from left to right (with horizontal ties broken
-        by vertical position), ask whether the bus (clock) has "arrived" at it.
-
-        A bench is considered "arrived" if the Euclidean distance between the
-        bus center and the bench center is strictly less than `self.dist_threshold`.
-        """
-        # Collect benches and bus (clock) detections
-        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
-        benches = labeled_bboxes.get("bench", [])
-        clocks = labeled_bboxes.get("clock", [])
-
-        # If no benches or no bus is detected, the question is not applicable
-        if len(benches) == 0 or len(clocks) == 0:
-            return []
-
-        # Use the first clock as the bus marker
-        bus_bbox = clocks[0]
-
-        # Compute centroids
-        bench_centroids = [centroid(bbox) for bbox in benches]
-        bus_centroid = centroid(bus_bbox)
-
-        bench_widths = [bbox[2] - bbox[0] for bbox in benches]
-        # Number benches from left to right, breaking horizontal ties using width-based threshold
-        bench_order = sort_indices_strict_left_to_right(
-            bench_centroids
-        )
-
-        # Pre-compute distances from each bench to the bus
-        bus_c = np.array(bus_centroid)
-        bench_distances = [
-            np.linalg.norm(np.array(bench_centroids[i]) - bus_c)
-            for i in range(len(benches))
-        ]
-
-        qas: list[tuple[str, str]] = []
-        for rank, bench_idx in enumerate(bench_order):
-            question = self.question.format(bench_number=rank + 1)
-            answer = "Yes" if bench_distances[bench_idx] < self.dist_threshold else "No"
-            qas.append((question, answer))
-
-        return qas
-
-class ClosestStopSigns(Question):
-    def __init__(self) -> None:
-        """
-        Ask: after numbering all stop signs from left to right (with a vertical tie-break),
-        which stop sign is closest to the bus (clock)? Answer is a single integer.
-        """
-        super().__init__(
-            question=(
-                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
-                "Which stop sign is closest to the clock? "
-                "Answer with its ID."
-            ),
-            variables=[],
-            predicates=[
-                ObjectDetectionPredicates.at_least_one_single_detection,
-            ],
-        )
-
-    def apply(self, image, detections):
-        # Only stop signs and the bus (clock) are needed
-        labeled_bboxes = collect_detections_by_label(
-            detections, ["stop sign", "clock"]
-        )
-
-        stop_signs = labeled_bboxes.get("stop sign", [])
-        clocks = labeled_bboxes.get("clock", [])
-
-        # If no stop signs or no bus, do not generate this question
-        if len(stop_signs) == 0 or len(clocks) == 0:
-            return []
-
-        # Use the first clock as the bus position
-        bus_bbox = clocks[0]
-        bus_centroid = centroid(bus_bbox)
-
-        # Geometry for stop signs
-        stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
-        stop_sign_widths = [bbox[2] - bbox[0] for bbox in stop_signs]
-
-        # 1) Number stop signs from left to right, with vertical tie-break
-        stop_sign_order = sort_indices_strict_left_to_right(
-            stop_sign_centroids
-        )
-
-        # Map detection index -> stop sign number (1, 2, 3, ...)
-        idx_to_number = {
-            idx: num for num, idx in enumerate(stop_sign_order, start=1)
-        }
-
-        # 2) Find the stop sign closest to the bus (clock)
-        bus_c = np.array(bus_centroid)
-        stop_sign_distances = [
-            np.linalg.norm(np.array(c) - bus_c) for c in stop_sign_centroids
-        ]
-        closest_idx = int(np.argmin(stop_sign_distances))
-
-        # 3) Convert its detection index to the left-to-right stop sign number
-        answer_number = idx_to_number[closest_idx]
-
-        return [(self.question, str(answer_number))]
 
 class ClosestToFurthestStopSigns(Question):
     def __init__(self) -> None:
@@ -762,113 +1111,103 @@ class ClosestToFurthestStopSigns(Question):
         )
         ordered_ids = [stop_sign_num[idx] for idx in idx_by_distance]
 
-        return [(self.question, ", ".join(map(str, ordered_ids)))]   
+        return [(self.question, ", ".join(map(str, ordered_ids)))]
 
-class ArrivedAtAnimalsAroundStopSigns(Question):
-    def __init__(self, dist_threshold: float) -> None:
-        """
-        Does the bus (clock) arrive at the animals around each left-to-right
-        numbered stop sign?
-        """
+class FurthestToClosestBenches(Question):
+    def __init__(self) -> None:
         super().__init__(
             question=(
-                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
-                "For each stop sign, consider all animals that are spatially closest to that stop sign. "
-                "Is the clock close to the animals around stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'."
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "List the benches in order from furthest to closest to the clock, separated by commas. "
+                "For example, '3, 4, 1, 2'. "
             ),
-            variables=["stop_sign_number"],
+            variables=[],
             predicates=[
                 ObjectDetectionPredicates.at_least_one_single_detection,
             ],
         )
-        # Distance threshold in pixels: distance from the clock to the nearest animal
-        # in the group associated with a given stop sign.
-        self.dist_threshold: float = dist_threshold
 
     def apply(self, image, detections):
-        """
-        1. Number all stop signs from left to right (with a vertical tie-break).
-        2. Assign each animal (elephant, giraffe, zebra) to its nearest stop sign,
-           forming an animal group around each stop sign.
-        3. For each stop sign, compute the minimum distance from the clock to
-           any animal in its group. If this distance is below dist_threshold,
-           answer 'Yes'; otherwise, answer 'No'.
-        """
-        # We only care about stop signs, the clock, and the three animal categories
-        target_labels = ["stop sign", "clock", "elephant", "giraffe", "zebra"]
-        labeled_bboxes = collect_detections_by_label(detections, target_labels)
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
+        benches = labeled_bboxes["bench"]
+        bus_bboxes = labeled_bboxes["clock"]
 
+        if len(benches) == 0 or len(bus_bboxes) == 0:
+            return []
+
+        bus_centroid = centroid(bus_bboxes[0])
+        bench_centroids = [centroid(bbox) for bbox in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+        bench_num = {idx: num for num, idx in enumerate(bench_order, start=1)}
+
+        bench_distances = [
+            np.linalg.norm(np.array(bench_centroids[i]) - np.array(bus_centroid))
+            for i in range(len(benches))
+        ]
+
+        # Sort furthest → closest (reverse=True)
+        idx_by_distance = [
+            bench_num[idx]
+            for idx in sorted(range(len(benches)), key=lambda i: bench_distances[i], reverse=True)
+        ]
+        return [(self.question, ", ".join(map(str, idx_by_distance)))]
+
+class FurthestToClosestStopSigns(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "List the stop signs in order from furthest to closest to the clock, separated by commas. "
+                "For example, '2, 1'. "
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "clock"])
         stop_signs = labeled_bboxes.get("stop sign", [])
         clocks = labeled_bboxes.get("clock", [])
 
-        # Collect all animal bounding boxes (elephant, giraffe, zebra)
-        animal_bboxes: List[Tuple[float, float, float, float]] = []
-        for lbl in ("elephant", "giraffe", "zebra"):
-            animal_bboxes.extend(labeled_bboxes.get(lbl, []))
-
-        # If there are no stop signs, no clock, or no animals, do not generate questions
-        if len(stop_signs) == 0 or len(clocks) == 0 or len(animal_bboxes) == 0:
+        if len(stop_signs) == 0 or len(clocks) == 0:
             return []
 
-        # Use the first clock as the bus position
-        bus_bbox = clocks[0]
-        bus_centroid = centroid(bus_bbox)
-        bus_c = np.array(bus_centroid)
-
-        # Compute centroids and widths for all stop signs
+        bus_c = np.array(centroid(clocks[0]))
         stop_sign_centroids = [centroid(bbox) for bbox in stop_signs]
-        stop_sign_widths = [bbox[2] - bbox[0] for bbox in stop_signs]
+        stop_sign_order = sort_indices_strict_left_to_right(stop_sign_centroids)
+        stop_sign_num = {idx: num for num, idx in enumerate(stop_sign_order, start=1)}
 
-        # Number stop signs from left to right with a vertical tie-break,
-        # using a width-based epsilon (e.g., within 0.5 × max(width_i, width_j))
-        stop_sign_order = sort_indices_strict_left_to_right(
-            stop_sign_centroids
+        stop_sign_distances = [
+            np.linalg.norm(np.array(stop_sign_centroids[i]) - bus_c)
+            for i in range(len(stop_signs))
+        ]
+
+        # Sort furthest → closest (reverse=True)
+        idx_by_distance = sorted(
+            range(len(stop_signs)), key=lambda i: stop_sign_distances[i], reverse=True
         )
+        ordered_ids = [stop_sign_num[idx] for idx in idx_by_distance]
+        return [(self.question, ", ".join(map(str, ordered_ids)))]
 
-        # Compute centroids for all animals
-        animal_centroids = [centroid(bbox) for bbox in animal_bboxes]
+'''
+Group #5 Questions
+'''
 
-        # Assign each animal to its nearest stop sign
-        animals_per_stop_sign: List[List[int]] = [[] for _ in range(len(stop_signs))]
-        for a_idx, ac in enumerate(animal_centroids):
-            dists = [
-                np.linalg.norm(np.array(ac) - np.array(sc))
-                for sc in stop_sign_centroids
-            ]
-            nearest_stop = int(np.argmin(dists))
-            animals_per_stop_sign[nearest_stop].append(a_idx)
-
-        # Precompute the minimum distance from the clock to the animals
-        # around each stop sign. If a stop sign has no animals, the distance
-        # remains +inf and the answer will be 'No'.
-        min_dist_to_animals = [float("inf")] * len(stop_signs)
-        for s_idx, animal_indices in enumerate(animals_per_stop_sign):
-            if not animal_indices:
-                continue
-            dists = [
-                np.linalg.norm(np.array(animal_centroids[a_idx]) - bus_c)
-                for a_idx in animal_indices
-            ]
-            min_dist_to_animals[s_idx] = min(dists)
-
-        # Generate QA pairs in the left-to-right order of stop signs
-        qas: List[Tuple[str, str]] = []
-        for rank, stop_sign_idx in enumerate(stop_sign_order):
-            question = self.question.format(stop_sign_number=rank + 1)
-            d = min_dist_to_animals[stop_sign_idx]
-            answer = "Yes" if d < self.dist_threshold else "No"
-            qas.append((question, answer))
-
-        return qas
-
-def check_path_blocked(bbox1, bbox2, bbox_other) -> bool:
+def check_path_blocked(bbox1, bbox2, bbox_other, margin: float = 0.0) -> bool:
     """
     Return True iff the segment between the centroids of bbox1 and bbox2
-    intersects bbox_other.
+    intersects bbox_other (optionally expanded by `margin` pixels on each side).
     """
     c1 = np.array(centroid(bbox1))
     c2 = np.array(centroid(bbox2))
-    t = segment_box_entry_t(c1, c2, bbox_other)
+    if margin > 0.0:
+        x0, y0, x1, y1 = map(float, bbox_other)
+        expanded = (x0 - margin, y0 - margin, x1 + margin, y1 + margin)
+        t = segment_box_entry_t(c1, c2, expanded)
+    else:
+        t = segment_box_entry_t(c1, c2, bbox_other)
     return t is not None
 
 def segment_box_entry_t(
@@ -1095,6 +1434,171 @@ def recommend_detour_direction(
             else:
                 return "go left"
 
+_EIGHT_DIRS = [
+    "go right",
+    "go lower-right",
+    "go down",
+    "go lower-left",
+    "go left",
+    "go upper-left",
+    "go up",
+    "go upper-right",
+]
+
+def _eight_direction(dx: float, dy: float) -> str:
+    """Return one of 8 compass directions for a displacement (dx, dy).
+    Image coordinates: x+ is right, y+ is down.
+    Uses equal 45-degree sectors via atan2.
+    """
+    import math
+    sector = round(math.atan2(dy, dx) / (math.pi / 4)) % 8
+    return _EIGHT_DIRS[sector]
+
+class GeometricDirectionToBench(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Ignoring any obstacles, in which direction should the clock move to get closer to bench #{bench_number}? "
+                "Answer with exactly one of: 'go left', 'go right', 'go up', 'go down', "
+                "'go upper-left', 'go upper-right', 'go lower-left', or 'go lower-right'. "
+                "Choose the direction that most closely matches the angle from the clock to bench #{bench_number}."
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["bench", "clock"])
+        benches = labeled_bboxes.get("bench", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        if len(benches) == 0 or len(clocks) == 0:
+            return []
+
+        bus_c = np.array(centroid(clocks[0]))
+        bench_centroids = [centroid(b) for b in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, bench_idx in enumerate(bench_order):
+            bench_c = np.array(bench_centroids[bench_idx])
+            direction = _eight_direction(
+                float(bench_c[0] - bus_c[0]),
+                float(bench_c[1] - bus_c[1]),
+            )
+            qas.append((self.question.format(bench_number=rank + 1), direction))
+        return qas
+
+class GeometricDirectionToStopSign(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "Ignoring any obstacles, in which direction should the clock move to get closer to stop sign #{stop_sign_number}? "
+                "Answer with exactly one of: 'go left', 'go right', 'go up', 'go down', "
+                "'go upper-left', 'go upper-right', 'go lower-left', or 'go lower-right'. "
+                "Choose the direction that most closely matches the angle from the clock to stop sign #{stop_sign_number}."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        labeled_bboxes = collect_detections_by_label(detections, ["stop sign", "clock"])
+        stop_signs = labeled_bboxes.get("stop sign", [])
+        clocks = labeled_bboxes.get("clock", [])
+
+        if len(stop_signs) == 0 or len(clocks) == 0:
+            return []
+
+        bus_c = np.array(centroid(clocks[0]))
+        stop_sign_centroids = [centroid(s) for s in stop_signs]
+        stop_sign_order = sort_indices_strict_left_to_right(stop_sign_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, ss_idx in enumerate(stop_sign_order):
+            ss_c = np.array(stop_sign_centroids[ss_idx])
+            direction = _eight_direction(
+                float(ss_c[0] - bus_c[0]),
+                float(ss_c[1] - bus_c[1]),
+            )
+            qas.append((self.question.format(stop_sign_number=rank + 1), direction))
+        return qas
+
+class IsDirectPathClear(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Is the direct straight-line path from the clock to bench #{bench_number} completely clear of obstacles? "
+                "Answer with exactly 'Yes' or 'No'."
+            ),
+            variables=["bench_number"],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        animal_labels = ["elephant", "zebra", "giraffe"]
+        target_labels = ["bench", "person", "clock", "stop sign"] + animal_labels
+        labeled_bboxes = collect_detections_by_label(detections, target_labels)
+
+        benches = labeled_bboxes.get("bench", [])
+        persons = labeled_bboxes.get("person", [])
+        clocks = labeled_bboxes.get("clock", [])
+        stop_signs = labeled_bboxes.get("stop sign", [])
+        animal_bboxes = [
+            bbox
+            for lbl in animal_labels
+            for bbox in labeled_bboxes.get(lbl, [])
+        ]
+
+        if len(benches) == 0 or len(clocks) == 0:
+            return []
+
+        bus_bbox = clocks[0]
+        _bx0, _by0, _bx1, _by1 = map(float, bus_bbox)
+        bus_margin = max((_bx1 - _bx0) / 2.0, (_by1 - _by0) / 2.0)
+
+        bench_centroids = [centroid(b) for b in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+
+        # Assign each person to the nearest bench
+        person_centroids = [centroid(p) for p in persons]
+        person_assignment: list[int] = []
+        for pc in person_centroids:
+            dists = [np.linalg.norm(np.array(pc) - np.array(bc)) for bc in bench_centroids]
+            person_assignment.append(int(np.argmin(dists)))
+
+        qas: list[tuple[str, str]] = []
+        for rank, bench_idx in enumerate(bench_order):
+            bench_bbox = benches[bench_idx]
+
+            # Same obstacle set as PathBlockedBetweenBusAndBench
+            obstacles = []
+            for i, bbox in enumerate(benches):
+                if i != bench_idx:
+                    obstacles.append(bbox)
+            for i, bbox in enumerate(persons):
+                if i < len(person_assignment) and person_assignment[i] != bench_idx:
+                    obstacles.append(bbox)
+            obstacles.extend(stop_signs)
+            obstacles.extend(animal_bboxes)
+
+            blocked = any(
+                check_path_blocked(bus_bbox, bench_bbox, ob, bus_margin)
+                for ob in obstacles
+            )
+            answer = "No" if blocked else "Yes"
+            qas.append((self.question.format(bench_number=rank + 1), answer))
+        return qas
+
 class PathBlockedBetweenBusAndBench(Question):
     def __init__(self) -> None:
         """
@@ -1146,6 +1650,8 @@ class PathBlockedBetweenBusAndBench(Question):
             return []
 
         bus_bbox = clocks[0]
+        _bx0, _by0, _bx1, _by1 = map(float, bus_bbox)
+        bus_margin = max((_bx1 - _bx0) / 2.0, (_by1 - _by0) / 2.0)
 
         # Bench geometry
         bench_centroids = [centroid(b) for b in benches]
@@ -1197,7 +1703,7 @@ class PathBlockedBetweenBusAndBench(Question):
             # Determine which of these actually block the straight line
             blocking_obstacles = [
                 ob for ob in all_obstacles
-                if check_path_blocked(bus_bbox, bench_bbox, ob)
+                if check_path_blocked(bus_bbox, bench_bbox, ob, bus_margin)
             ]
 
             direction = recommend_detour_direction(
@@ -1266,6 +1772,8 @@ class PathBlockedBetweenBusAndStopSign(Question):
             return []
 
         bus_bbox = clocks[0]
+        _bx0, _by0, _bx1, _by1 = map(float, bus_bbox)
+        bus_margin = max((_bx1 - _bx0) / 2.0, (_by1 - _by0) / 2.0)
 
         # Stop sign geometry
         stop_sign_centroids = [centroid(b) for b in stop_signs]
@@ -1320,7 +1828,7 @@ class PathBlockedBetweenBusAndStopSign(Question):
             # Determine which of these actually block the straight line
             blocking_obstacles = [
                 ob for ob in all_obstacles
-                if check_path_blocked(bus_bbox, target_stop_bbox, ob)
+                if check_path_blocked(bus_bbox, target_stop_bbox, ob, bus_margin)
             ]
 
             direction = recommend_detour_direction(
@@ -1337,7 +1845,336 @@ class PathBlockedBetweenBusAndStopSign(Question):
             qas.append((question, answer))
 
         return qas
-    
+
+'''
+Group #6 Questions
+'''
+
+def _find_red_dot(image: Image.Image, bus_bbox, search_radius: int = 320) -> Optional[tuple]:
+    """
+    Search for the vivid red heading dot near the bus bbox using HSV color thresholding.
+    Returns (cx, cy) in full-image coordinates, or None if not found.
+    search_radius is set to cover BUS_HEADING_DOT_OFFSET (215px) plus generous margin.
+    """
+    import cv2
+    cx, cy = centroid(bus_bbox)
+    img_w, img_h = image.size
+    x1 = max(0, int(cx - search_radius))
+    y1 = max(0, int(cy - search_radius))
+    x2 = min(img_w, int(cx + search_radius))
+    y2 = min(img_h, int(cy + search_radius))
+
+    crop = np.array(image.convert("RGB"))[y1:y2, x1:x2]
+    hsv  = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
+
+    # Red wraps around hue=0/180; two ranges cover both ends
+    mask1 = cv2.inRange(hsv, np.array([0,   150, 150]), np.array([10,  255, 255]))
+    mask2 = cv2.inRange(hsv, np.array([170, 150, 150]), np.array([180, 255, 255]))
+    mask  = cv2.bitwise_or(mask1, mask2)
+
+    moments = cv2.moments(mask)
+    if moments["m00"] < 200:   # require at least 200 red pixels
+        return None
+    dot_cx = moments["m10"] / moments["m00"] + x1
+    dot_cy = moments["m01"] / moments["m00"] + y1
+    return (dot_cx, dot_cy)
+
+class BusHeadingDirection(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "A red circle is placed in front of the clock in the image to indicate its current heading direction. "
+                "Based on the position of the red circle relative to the clock, in which direction is the clock currently heading? "
+                "Answer with exactly one of: 'go left', 'go right', 'go up', 'go down', "
+                "'go upper-left', 'go upper-right', 'go lower-left', or 'go lower-right'."
+            ),
+            variables=[],
+            predicates=[
+                ObjectDetectionPredicates.at_least_one_single_detection,
+            ],
+        )
+
+    def apply(self, image, detections):
+        clocks = collect_detections_by_label(detections, ["clock"]).get("clock", [])
+        if not clocks:
+            return []
+
+        bus_bbox = clocks[0]
+        red_dot  = _find_red_dot(image, bus_bbox)
+        if red_dot is None:
+            return []
+
+        bus_c = np.array(centroid(bus_bbox))
+        direction = _eight_direction(
+            float(red_dot[0] - bus_c[0]),
+            float(red_dot[1] - bus_c[1]),
+        )
+        return [(self.question, direction)]
+
+_RELATIVE_DIRS = [
+    "front",
+    "front-right",
+    "right",
+    "back-right",
+    "back",
+    "back-left",
+    "left",
+    "front-left",
+]
+
+def _relative_direction(heading_dx: float, heading_dy: float,
+                         target_dx: float, target_dy: float) -> str:
+    """Return one of 8 relative positions of the target in the robot's frame.
+    Image coords: x+ right, y+ down.  Positive delta = clockwise = right side.
+    """
+    heading_angle = math.atan2(heading_dy, heading_dx)
+    target_angle  = math.atan2(target_dy,  target_dx)
+    delta = target_angle - heading_angle
+    while delta >  math.pi: delta -= 2 * math.pi
+    while delta <= -math.pi: delta += 2 * math.pi
+    sector = round(delta / (math.pi / 4)) % 8
+    return _RELATIVE_DIRS[sector]
+
+def _turn_direction(heading_dx: float, heading_dy: float,
+                    target_dx: float, target_dy: float) -> str:
+    """Return 'turn left', 'turn right', or 'already facing'.
+    In image coords, positive delta (clockwise) = turn right.
+    'already facing' when |delta| <= pi/8 (within the front sector).
+    """
+    heading_angle = math.atan2(heading_dy, heading_dx)
+    target_angle  = math.atan2(target_dy,  target_dx)
+    delta = target_angle - heading_angle
+    while delta >  math.pi: delta -= 2 * math.pi
+    while delta <= -math.pi: delta += 2 * math.pi
+    if abs(delta) <= math.pi / 8:
+        return "already facing"
+    return "turn right" if delta > 0 else "turn left"
+
+def _get_bus_heading(image, detections):
+    """Return (bus_bbox, heading_dx, heading_dy, bus_c) or None."""
+    clocks = collect_detections_by_label(detections, ["clock"]).get("clock", [])
+    if not clocks:
+        return None
+    bus_bbox = clocks[0]
+    red_dot  = _find_red_dot(image, bus_bbox)
+    if red_dot is None:
+        return None
+    bus_c = np.array(centroid(bus_bbox))
+    return bus_bbox, float(red_dot[0] - bus_c[0]), float(red_dot[1] - bus_c[1]), bus_c
+
+class IsRobotFacingBench(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "Is the clock currently facing bench #{bench_number}? "
+                "Answer with exactly 'Yes' or 'No'."
+            ),
+            variables=["bench_number"],
+            predicates=[ObjectDetectionPredicates.at_least_one_single_detection],
+        )
+
+    def apply(self, image, detections):
+        info = _get_bus_heading(image, detections)
+        if info is None:
+            return []
+        _, heading_dx, heading_dy, bus_c = info
+
+        benches = collect_detections_by_label(detections, ["bench"]).get("bench", [])
+        if not benches:
+            return []
+        bench_centroids = [centroid(b) for b in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, bench_idx in enumerate(bench_order):
+            bench_c = np.array(bench_centroids[bench_idx])
+            rel = _relative_direction(
+                heading_dx, heading_dy,
+                float(bench_c[0] - bus_c[0]), float(bench_c[1] - bus_c[1]),
+            )
+            answer = "Yes" if rel == "front" else "No"
+            qas.append((self.question.format(bench_number=rank + 1), answer))
+        return qas
+
+class IsRobotFacingStopSign(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "Is the clock currently facing stop sign #{stop_sign_number}? "
+                "Answer with exactly 'Yes' or 'No'."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[ObjectDetectionPredicates.at_least_one_single_detection],
+        )
+
+    def apply(self, image, detections):
+        info = _get_bus_heading(image, detections)
+        if info is None:
+            return []
+        _, heading_dx, heading_dy, bus_c = info
+
+        stop_signs = collect_detections_by_label(detections, ["stop sign"]).get("stop sign", [])
+        if not stop_signs:
+            return []
+        ss_centroids = [centroid(s) for s in stop_signs]
+        ss_order = sort_indices_strict_left_to_right(ss_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, ss_idx in enumerate(ss_order):
+            ss_c = np.array(ss_centroids[ss_idx])
+            rel = _relative_direction(
+                heading_dx, heading_dy,
+                float(ss_c[0] - bus_c[0]), float(ss_c[1] - bus_c[1]),
+            )
+            answer = "Yes" if rel == "front" else "No"
+            qas.append((self.question.format(stop_sign_number=rank + 1), answer))
+        return qas
+
+class TurnDirectionToBench(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "To face bench #{bench_number}, should the clock turn left, turn right, or is it already facing that bench? "
+                "Answer with exactly one of: 'turn left', 'turn right', or 'already facing'."
+            ),
+            variables=["bench_number"],
+            predicates=[ObjectDetectionPredicates.at_least_one_single_detection],
+        )
+
+    def apply(self, image, detections):
+        info = _get_bus_heading(image, detections)
+        if info is None:
+            return []
+        _, heading_dx, heading_dy, bus_c = info
+
+        benches = collect_detections_by_label(detections, ["bench"]).get("bench", [])
+        if not benches:
+            return []
+        bench_centroids = [centroid(b) for b in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, bench_idx in enumerate(bench_order):
+            bench_c = np.array(bench_centroids[bench_idx])
+            answer = _turn_direction(
+                heading_dx, heading_dy,
+                float(bench_c[0] - bus_c[0]), float(bench_c[1] - bus_c[1]),
+            )
+            qas.append((self.question.format(bench_number=rank + 1), answer))
+        return qas
+
+class TurnDirectionToStopSign(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "To face stop sign #{stop_sign_number}, should the clock turn left, turn right, or is it already facing that stop sign? "
+                "Answer with exactly one of: 'turn left', 'turn right', or 'already facing'."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[ObjectDetectionPredicates.at_least_one_single_detection],
+        )
+
+    def apply(self, image, detections):
+        info = _get_bus_heading(image, detections)
+        if info is None:
+            return []
+        _, heading_dx, heading_dy, bus_c = info
+
+        stop_signs = collect_detections_by_label(detections, ["stop sign"]).get("stop sign", [])
+        if not stop_signs:
+            return []
+        ss_centroids = [centroid(s) for s in stop_signs]
+        ss_order = sort_indices_strict_left_to_right(ss_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, ss_idx in enumerate(ss_order):
+            ss_c = np.array(ss_centroids[ss_idx])
+            answer = _turn_direction(
+                heading_dx, heading_dy,
+                float(ss_c[0] - bus_c[0]), float(ss_c[1] - bus_c[1]),
+            )
+            qas.append((self.question.format(stop_sign_number=rank + 1), answer))
+        return qas
+
+class BenchRelativeToHeading(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "Where is bench #{bench_number} relative to the clock's current heading direction? "
+                "Answer with exactly one of: 'front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', or 'front-left'."
+            ),
+            variables=["bench_number"],
+            predicates=[ObjectDetectionPredicates.at_least_one_single_detection],
+        )
+
+    def apply(self, image, detections):
+        info = _get_bus_heading(image, detections)
+        if info is None:
+            return []
+        _, heading_dx, heading_dy, bus_c = info
+
+        benches = collect_detections_by_label(detections, ["bench"]).get("bench", [])
+        if not benches:
+            return []
+        bench_centroids = [centroid(b) for b in benches]
+        bench_order = sort_indices_strict_left_to_right(bench_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, bench_idx in enumerate(bench_order):
+            bench_c = np.array(bench_centroids[bench_idx])
+            answer = _relative_direction(
+                heading_dx, heading_dy,
+                float(bench_c[0] - bus_c[0]), float(bench_c[1] - bus_c[1]),
+            )
+            qas.append((self.question.format(bench_number=rank + 1), answer))
+        return qas
+
+class StopSignRelativeToHeading(Question):
+    def __init__(self) -> None:
+        super().__init__(
+            question=(
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "Where is stop sign #{stop_sign_number} relative to the clock's current heading direction? "
+                "Answer with exactly one of: 'front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', or 'front-left'."
+            ),
+            variables=["stop_sign_number"],
+            predicates=[ObjectDetectionPredicates.at_least_one_single_detection],
+        )
+
+    def apply(self, image, detections):
+        info = _get_bus_heading(image, detections)
+        if info is None:
+            return []
+        _, heading_dx, heading_dy, bus_c = info
+
+        stop_signs = collect_detections_by_label(detections, ["stop sign"]).get("stop sign", [])
+        if not stop_signs:
+            return []
+        ss_centroids = [centroid(s) for s in stop_signs]
+        ss_order = sort_indices_strict_left_to_right(ss_centroids)
+
+        qas: list[tuple[str, str]] = []
+        for rank, ss_idx in enumerate(ss_order):
+            ss_c = np.array(ss_centroids[ss_idx])
+            answer = _relative_direction(
+                heading_dx, heading_dy,
+                float(ss_c[0] - bus_c[0]), float(ss_c[1] - bus_c[1]),
+            )
+            qas.append((self.question.format(stop_sign_number=rank + 1), answer))
+        return qas
+
+
 ### <-- ORIGINAL GRAID QUESTIONS --> ###
 
 class IsObjectCentered(Question):
