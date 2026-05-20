@@ -78,7 +78,7 @@ class InferenceResponse(BaseModel):
     success: bool
     text: Optional[str] = None
     error: Optional[str] = None
-def run_inference_sync(request: InferenceRequest):
+def run_inference_sync(request: InferenceRequest, cancel_event: threading.Event):
     """Main endpoint - robot sends images here"""
     try:
         start = time.perf_counter() 
@@ -186,14 +186,18 @@ def base64_to_opencv(base64_string: str) -> np.ndarray:
     
     return img
 
-cancel_event = threading.Event()
+
 # async def run_inference_sync():
 class CancellationCriteria(StoppingCriteria):
+    def __init__(self,event: threading.Event):
+        self.cancel_event = event
+
     def __call__(self, input_ids, scores, **kwargs):
-        return cancel_event.is_set()
+        return self.event.is_set()
     
 @app.post("/inference", response_model=InferenceResponse)
 async def run_inference_await(request: InferenceRequest):
+    cancel_event = threading.Event()
     loop = asyncio.get_event_loop()
     
     try:
@@ -201,11 +205,12 @@ async def run_inference_await(request: InferenceRequest):
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 executor,
-                functools.partial(run_inference_sync, request)
+                functools.partial(run_inference_sync, request,cancel_event)
             ),
             timeout=4.0
         )
     except Exception as e:
+        cancel_event.set()
         return InferenceResponse(success=False,error=str(e))
     return result
 
