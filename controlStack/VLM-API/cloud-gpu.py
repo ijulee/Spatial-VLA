@@ -8,11 +8,12 @@ import cv2
 from PIL import Image
 from typing import Optional
 import torch
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, StoppingCriteria, StoppingCriteriaList
 from peft import PeftModel
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import functools
+import threading
 # Create the FastAPI app (this is your web server)
 app = FastAPI(title="Robot VLM Server")
 executor = ThreadPoolExecutor(max_workers=1)  # Only 1 inference at a time
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
     
     yield
 
+# executor = ProcessPoolExecutor(max_workers=1,initializer=worker_init)
 
 app = FastAPI(lifespan=lifespan, title="small testing server")
 
@@ -123,7 +125,8 @@ def run_inference_sync(request: InferenceRequest):
                 **inputs,
                 max_new_tokens=request.max_tokens,
                 temperature=request.temperature,
-                do_sample=True if request.temperature > 0 else False
+                do_sample=True if request.temperature > 0 else False,
+                stopping_criteria=StoppingCriteria([CancellationCriteria()])
             )
         
         # Decode output
@@ -183,8 +186,12 @@ def base64_to_opencv(base64_string: str) -> np.ndarray:
     
     return img
 
+cancel_event = threading.Event()
 # async def run_inference_sync():
-
+class CancellationCriteria(StoppingCriteria):
+    def __call__(self, input_ids, scores, **kwargs):
+        return cancel_event.is_set()
+    
 @app.post("/inference", response_model=InferenceResponse)
 async def run_inference_await(request: InferenceRequest):
     loop = asyncio.get_event_loop()
@@ -198,8 +205,8 @@ async def run_inference_await(request: InferenceRequest):
             ),
             timeout=4.0
         )
-    except:
-        print("ERROR")
+    except Exception as e:
+        return InferenceResponse(success=False,error=str(e))
     return result
 
 
