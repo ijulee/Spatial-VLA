@@ -2,12 +2,13 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import base64
+from contextlib import asynccontextmanager
 import numpy as np
 import cv2
 from PIL import Image
 from typing import Optional
 import torch
-from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from peft import PeftModel
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
@@ -20,13 +21,13 @@ executor = ThreadPoolExecutor(max_workers=1)  # Only 1 inference at a time
 model = None
 processor = None
 
-@app.on_event("startup")
-async def load_model():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Load model when server starts (runs once)"""
     global model, processor
-    model_id = "llava-hf/llava-v1.6-mistral-7b-hf"
+    model_id = "Qwen/Qwen3-VL-4B-Instruct"
 
-    graid_path = "./llava-graid-lora"
+    graid_path = "./controlStack/VLM-API/qwen_zoo_bus_vqa_lora_best_checkpoint"
     # model = LlavaNextForConditionalGeneration.from_pretrained(
     #     model_id,
     #     torch_dtype=torch.bfloat16,
@@ -36,13 +37,25 @@ async def load_model():
     # processor = AutoProcessor.from_pretrained(model_id)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
-    processor = LlavaNextProcessor.from_pretrained(graid_path,use_fast=True)
-    model = LlavaNextForConditionalGeneration.from_pretrained(
+
+    # processor = LlavaNextProcessor.from_pretrained(graid_path,use_fast=True)
+    processor = AutoProcessor.from_pretrained(
+    graid_path,use_fast=True
+    )
+
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
         model_id, device_map=device, torch_dtype=dtype
     )
+
     model = PeftModel.from_pretrained(model, graid_path)
+    # model = model.merge_and_unload() Optionally merge base model with Lora weights
     model.eval()
     
+    yield
+
+
+app = FastAPI(lifespan=lifespan, title="small testing server")
+
 prefixes_to_remove = [
             "ASSISTANT:",
             "Assistant:",
@@ -137,11 +150,9 @@ def run_inference_sync(request: InferenceRequest):
         for prefix in prefixes_to_remove:
             if response_text.startswith(prefix):
                 response_text = response_text[len(prefix):].strip()
-                # print(f"🧹 Removed prefix: '{prefix}'")
 
         if "</s>" in response_text:
             response_text = response_text.split("</s>")[0].strip()
-            # print("🧹 Removed </s> suffix")
 
         print(time.perf_counter() -start)
         
