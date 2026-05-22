@@ -5,9 +5,10 @@ from unitTests import UnitTest
 
 TESTS = [fn for _, fn in inspect.getmembers(UnitTest, predicate=inspect.isfunction)]
 def on_run():
-    for cls, var in vars_.items():
-        if var.get():
-            cls()
+    selected = next((fn for fn in TESTS if fn.__name__ == selected_var.get()), None)
+    if selected:
+        selected()
+
 
 root = tk.Tk()
 root.title("Spatial-VLA unitTest selector")

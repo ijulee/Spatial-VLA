@@ -31,7 +31,7 @@ class UnitTest:
         for _ in range(100):
             camera.read()
         img = camera.read()
-        ans = send_to_VLM(img,fsm.question_dict["DirectionToClosestBench"])
+        ans = send_to_VLM(img,f"{fsm.question_dict['DirectionToClosestBench']}" )
         return ans.json()['text']
     
     def DirectionToClosestStopSign():
@@ -41,7 +41,7 @@ class UnitTest:
         for _ in range(100):
             camera.read()
         img = camera.read()
-        ans = send_to_VLM(img,fsm.question_dict["DirectionToClosestStopSign"])
+        ans = send_to_VLM(img,f"{fsm.question_dict['DirectionToClosestStopSign']}")
         return ans.json()['text']
 
 
@@ -49,9 +49,9 @@ class UnitTest:
         fsm.override_states("DRIVETONEARESTBENCH")
         img = camera.read()
 
-        prompt = fsm.question_dict['ClosestToFurthestBench']
+        prompt = f"{fsm.question_dict['ClosestToFurthestBenches']}"
         response = send_to_VLM(img,prompt).json()['text']
-        fsm.update_observations({'ClosestToFurthestBench': response})
+        fsm.update_observations({'ClosestToFurthestBenches': response})
         
         #This is our first dynamic test
         img = camera.read()
@@ -134,7 +134,7 @@ class UnitTest:
     def AvoidObstacleToReachClosestStopSign():
         fsm.override_states("DRIVETONEARESTSTOP")
         img = camera.read()
-        prompt = fsm.question_dict['ClosestToFurthestStopSigns']
+        prompt = f"{fsm.question_dict['ClosestToFurthestStopSigns']}"
         response = send_to_VLM(img,prompt).json()['text']
         fsm.update_observations({'ClosestToFurthestStopSigns': response})
         
@@ -212,7 +212,7 @@ class UnitTest:
                     time.sleep(2) # wait for robot to process command
 
             img = camera.read()
-            prompt = (f"{fsm.question_dict['ArrivedAtAnimalsAroundStopSigns']} respond with a \'yes\' or \'no\'")
+            prompt = (f"{fsm.question_dict['ArrivedAtAnimalsAroundStopSigns']} respond with a \'yes\' or \'no\'") #Just end it here for the unit test
             exit_answer = send_to_VLM(img,prompt)
 
 
