@@ -66,6 +66,8 @@ def send_to_VLM(img,phase) :
                 "temperature": 0.5
             }
             # print(payload["image"])
+            payload_json = json.dump(payload)
+            print(len(payload_json.encode('utf-8')))
             start = time.perf_counter()
             response = requests.post(
                 f"{SERVER_URL_ALT}/inference",
@@ -185,7 +187,37 @@ def is_robot_moving(img,supposed_to_move):
     except:
         return False
     return False
+def robot_controls(direction_response: str, )->list[str]:
+        # choose next action based on VLM response
+    all_commands = []
+    robot_heading = ll_fsm.robot_state.cur_heading
+    if direction_response == 'keep straight':
+        # align heading and go forward
+        all_commands.append(ll_fsm.turn_to_heading(heading_to_target))
+    elif direction_response == 'go left':
+        if 0 < robot_heading <= 180: # facing up
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+        else:
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+    elif direction_response == 'go right':
+        if 0 < robot_heading <= 180: # facing up
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+        else:
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+    elif direction_response == 'go up':
+        if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+        else:
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+    elif direction_response == 'go down':
+        if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+        else:
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+    return all_commands
+               
 
+    
 def test_bench():
     # img = Image.open("C:/Users/randy/OneDrive/Desktop/Spatial-VLA/Photos/Lab_photo.jpg")
     # img = np.array(img) 
@@ -308,15 +340,15 @@ def test_bench():
                 target,id = fsm.get_target()
                 # supposed_to_move = True
                 direction_prompt = (f'Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). '
-                               f'Use these printed numbers as the stop sign IDs. For {target} number {id}, choose the best '
-                               f'direction for the clock to move to reach that {target} while avoiding obstacles between them. '
-                               f'Answer with exactly one of: \'keep straight\', \'go left\', \'go right\', \'go up\', or \'go down\'. '
-                               f'Answer \'keep straight\' if the clock can move directly toward {target} {id} without colliding with '
-                               f'any objects. Answer \'go left\' or \'go right\' if the {target} is mainly above or below the clock and '
-                               f'it is better for the clock to pass the nearest obstacle between them on its left or right side. Answer '
-                               f'\'go up\' or \'go down\' if the {target} is mainly to the left or right of the clock and it is better '
-                               f'for the clock to pass the nearest obstacle between them above or below it.')
-                
+                                f'Use these printed numbers as the stop sign IDs. For {target} number {id}, choose the best '
+                                f'direction for the clock to move to reach that {target} while avoiding obstacles between them. '
+                                f'Answer with exactly one of: \'keep straight\', \'go left\', \'go right\', \'go up\', or \'go down\'. '
+                                f'Answer \'keep straight\' if the clock can move directly toward {target} {id} without colliding with '
+                                f'any objects. Answer \'go left\' or \'go right\' if the {target} is mainly above or below the clock and '
+                                f'it is better for the clock to pass the nearest obstacle between them on its left or right side. Answer '
+                                f'\'go up\' or \'go down\' if the {target} is mainly to the left or right of the clock and it is better '
+                                f'for the clock to pass the nearest obstacle between them above or below it.')
+
                 # requery with direction prompt:
                 direction_response = send_to_VLM(img, direction_prompt).json()['text']
                 print(f"VLM Direction Response: {direction_response}")
@@ -325,32 +357,7 @@ def test_bench():
                 item_point = Point(target_coords[0], -1*target_coords[1])
                 heading_to_target = robot_center.get_heading(item_point)
 
-                # choose next action based on VLM response
-                all_commands = []
-                robot_heading = ll_fsm.robot_state.cur_heading
-                if direction_response == 'keep straight':
-                    # align heading and go forward
-                    all_commands.append(ll_fsm.turn_to_heading(heading_to_target))
-                elif direction_response == 'go left':
-                    if 0 < robot_heading <= 180: # facing up
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
-                    else:
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
-                elif direction_response == 'go right':
-                    if 0 < robot_heading <= 180: # facing up
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
-                    else:
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
-                elif direction_response == 'go up':
-                    if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
-                    else:
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
-                elif direction_response == 'go down':
-                    if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
-                    else:
-                        all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+                all_commands = robot_controls(direction_response=direction_response)
 
                 all_commands.append(ll_fsm.go_forward(10))
                 print(f'robot header: {robot_heading}')
@@ -364,6 +371,7 @@ def test_bench():
                         except:
                             print("comms error")
                         time.sleep(2) # wait for robot to process command
+                
                 
             elif fsm.get_current_state() == 'VIEWANIMALS':
                 # block for 5 seconds and then add observation
