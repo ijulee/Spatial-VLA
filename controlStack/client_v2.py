@@ -16,6 +16,8 @@ import time
 import BluetoothBot
 import FSM
 from LowLevelFSM import *
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, StoppingCriteria, StoppingCriteriaList
+from peft import PeftModel
 
 toggle = 1
 SERVER_URL = "https://ik92uwhwu2vm2v-8000.proxy.runpod.net"
@@ -24,6 +26,16 @@ img_path_test = "C:/Users/randy/Desktop/Spatial-VLA/Photos/scene_001_bus_06.png"
 import cv2 
 from ultralytics import YOLO
 
+
+
+prefixes_to_remove = [
+            "ASSISTANT:",
+            "Assistant:",
+            "assistant:",
+            "[INST]",
+            "</s>",
+            "<s>",
+        ]
 
 class CameraStream:
     def __init__(self, src=0):
@@ -69,16 +81,103 @@ def send_to_VLM(img,phase) :
             payload_json = json.dump(payload)
             print(len(payload_json.encode('utf-8')))
             start = time.perf_counter()
-            response = requests.post(
-                f"{SERVER_URL_ALT}/inference",
-                json=payload
-                # timeout=30
+            # response = requests.post(
+            #     f"{SERVER_URL_ALT}/inference",
+            #     json=payload
+            #     # timeout=30
+            # )
+
+
+
+
+        try:
+            start = time.perf_counter() 
+            # Decode base64 -> OpenCV -> RGB -> PIL Image
+            # img_bgr = base64_to_opencv(payload_json.image)
+            # img_rgb = cv2.cvtColor(payload_json, cv2.COLOR_BGR2RGB)
+            # print(img_rgb.shape)
+            # Convert to PIL Image (what the processor expects)
+            from PIL import Image
+            pil_image = Image.fromarray(payload_json)
+            
+
+            # Prepare messages for Llama 3.2 Vision
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": payload_json.prompt}
+                    ]
+                }
+            ]
+            
+            # Apply chat template to get the formatted prompt
+            input_text = processor.apply_chat_template(
+                messages, 
+                add_generation_prompt=True,
+                tokenize=False
             )
+            
+            # Process image and text separately, then combine
+            inputs = processor(
+                images=[pil_image],
+                text=[input_text],
+                return_tensors="pt"
+            ).to("cuda")
+            
+            # Move inputs to GPU
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            
+            # Run inference
+            with torch.no_grad():
+                output = model.generate(
+                    **inputs,
+                    max_new_tokens=payload_json.max_tokens,
+                    temperature=payload_json.temperature,
+                    do_sample=True if payload_json.temperature > 0 else False,
+                    # stopping_criteria=StoppingCriteria([CancellationCriteria()])
+                )
+            
+            # Decode output
+            # generated_text = processor.decode(output[0], skip_special_tokens=True)
+            
+            # Extract only the assistant's response (remove prompt)
+            # The response usually comes after "assistant" or similar marker
+            # print(response_text)
+            # if "assistant" in generated_text.lower():
+                # response_text = generated_text.split("assistant")[-1].strip()
+            prompt_ids = processor.tokenizer(input_text, return_tensors="pt")["input_ids"][0]
+            gen_ids = output[0][prompt_ids.shape[0]:]  
+            # response_text = processor.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+            # response_text = response_text.split("[/INST]")[-1]
+            response_text = processor.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+            if "[/INST]" in response_text:
+                # Everything after [/INST] is the actual answer
+                response_text = response_text.split("[/INST]")[-1].strip()
+            # else:
+            #     # Fallback: just remove the input prompt
+            #     response_text = generated_text.replace(input_text, "").strip()
+            
+
+            for prefix in prefixes_to_remove:
+                if response_text.startswith(prefix):
+                    response_text = response_text[len(prefix):].strip()
+
+            if "</s>" in response_text:
+                response_text = response_text.split("</s>")[0].strip()
+
+            print(time.perf_counter() -start)
+            
+
+
+            response = response_text
             timing = time.perf_counter() - start
             # print(response.json())
             print("RESPONSE TIME: " , timing, " seconds" )
-        return response
-    return None
+            return response
+        except Exception as e:
+            return e
 
 # def MetaData(results):
     
@@ -187,7 +286,8 @@ def is_robot_moving(img,supposed_to_move):
     except:
         return False
     return False
-def robot_controls(direction_response: str, )->list[str]:
+
+def robot_controls(direction_response: str, heading_to_target)->list[str]:
         # choose next action based on VLM response
     all_commands = []
     robot_heading = ll_fsm.robot_state.cur_heading
@@ -357,10 +457,10 @@ def test_bench():
                 item_point = Point(target_coords[0], -1*target_coords[1])
                 heading_to_target = robot_center.get_heading(item_point)
 
-                all_commands = robot_controls(direction_response=direction_response)
+                all_commands = robot_controls(direction_response=direction_response,heading_to_target=heading_to_target)
 
                 all_commands.append(ll_fsm.go_forward(10))
-                print(f'robot header: {robot_heading}')
+                # print(f'robot header: {robot_heading}')
                 print(f'header to object: {heading_to_target}')
                 # send commands to robot
                 for commands in all_commands:
@@ -384,9 +484,39 @@ def test_bench():
             # only query again once robot stops moving
             # query = is_robot_moving(results, supposed_to_move) or not supposed_to_move
         
+def start_vla():
+    global model, processor
+    model_id = "Qwen/Qwen3-VL-4B-Instruct"
 
+    graid_path = "./controlStack/VLM-API/qwen_zoo_bus_vqa_lora_best_checkpoint"
+    # model = LlavaNextForConditionalGeneration.from_pretrained(
+    #     model_id,
+    #     torch_dtype=torch.bfloat16,
+    #     device_map="cuda",
+    #     # token=token  # Pass token explicitly
+    # )
+    # processor = AutoProcessor.from_pretrained(model_id)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
+
+    # processor = LlavaNextProcessor.from_pretrained(graid_path,use_fast=True)
+    processor = AutoProcessor.from_pretrained(
+    graid_path,use_fast=True
+    )
+
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_id, device_map=device, torch_dtype=dtype
+    )
+
+    model = PeftModel.from_pretrained(model, graid_path)
+    # model = model.merge_and_unload() Optionally merge base model with Lora weights
+    model.eval()
+    
 if __name__ == "__main__":
     # project_pipeline()
-    test_bench()
+    # test_bench()
+    # start_vla()
+    # while True:
+
             
     cv2.destroyAllWindows()

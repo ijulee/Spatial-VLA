@@ -1,6 +1,8 @@
 import tkinter as tk
 import inspect
 from unitTests import UnitTest 
+from client_v2 import start_vla
+import cv2
 #START UP GUI HERE
 
 TESTS = [fn for _, fn in inspect.getmembers(UnitTest, predicate=inspect.isfunction)]
@@ -20,6 +22,10 @@ for fn in TESTS:
 
 tk.Button(root, text="Run Selected", command=on_run).pack(pady=5)
 root.mainloop()
+start_vla()
+
+while True:
+    cv2.waitkey(0)
 #INFINITE LOOP WAITING ON GUI INPUT
 
 #WE ARE TESTING A ROBOT, SO WE NEED TO DISCARD ALL INPUTS BETWEEN GUI INPUT AND OUTPUT FROM FUNCTION

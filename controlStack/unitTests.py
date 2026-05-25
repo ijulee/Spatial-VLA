@@ -1,17 +1,16 @@
-if not __debug__:
+if __debug__:
     from client_v2 import get_clock_box, getCoords, find_item_with_id, is_robot_moving, CameraStream, send_to_VLM,display,robot_controls
     import FSM
     from LowLevelFSM import *
     from ultralytics import YOLO
+    
 #We only need to change our Q/A to do unit tests, our robot just listens. Plan is to make a custom GUI to make swapping easier hopefully.
 import tkinter as tk
 
-global fsm
-global ll_fsm 
-global camera
-global SERVER_URL
 
-if not __debug__:
+
+if __debug__:
+    
     fsm = FSM.SpatialVLMFSM()
     ll_fsm = LowLevelFSM(Point(0,0))
     camera = CameraStream(1).start()
