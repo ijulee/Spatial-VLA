@@ -1,6 +1,8 @@
 if __debug__:
-    from client_v2 import get_clock_box, getCoords, find_item_with_id, is_robot_moving, CameraStream, send_to_VLM,display,robot_controls
+    from client_v2 import get_clock_box, getCoords, find_item_with_id, is_robot_moving, CameraStream,display,robot_controls
+    # from gui import send_to_VLM
     import FSM
+    import cv2
     from LowLevelFSM import *
     from ultralytics import YOLO
     

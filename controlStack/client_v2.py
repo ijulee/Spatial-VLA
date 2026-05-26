@@ -18,7 +18,7 @@ import FSM
 from LowLevelFSM import *
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, StoppingCriteria, StoppingCriteriaList
 from peft import PeftModel
-
+import torch
 toggle = 1
 SERVER_URL = "https://ik92uwhwu2vm2v-8000.proxy.runpod.net"
 SERVER_URL_ALT = "https://6qqiotjjckfxuz-8000.proxy.runpod.net/"
@@ -27,6 +27,7 @@ import cv2
 from ultralytics import YOLO
 
 
+cv2.namedWindow("CAMERA VIEW", cv2.WINDOW_AUTOSIZE)
 
 prefixes_to_remove = [
             "ASSISTANT:",
@@ -39,7 +40,7 @@ prefixes_to_remove = [
 
 class CameraStream:
     def __init__(self, src=0):
-        self.stream = cv2.VideoCapture(src,cv2.CAP_DSHOW)
+        self.stream = cv2.VideoCapture(src,cv2.CAP_V4L2)
         (self.grabbed, self.frame) = self.stream.read()
         self.stopped = False
 
@@ -53,6 +54,7 @@ class CameraStream:
                 self.stop()
             else:
                 (self.grabbed, self.frame) = self.stream.read()
+            # time.sleep(0.001) 
 
     def read(self):
         return self.frame
@@ -175,7 +177,7 @@ def send_to_VLM(img,phase) :
             timing = time.perf_counter() - start
             # print(response.json())
             print("RESPONSE TIME: " , timing, " seconds" )
-            return response
+            return json.loads(response)
         except Exception as e:
             return e
 
@@ -287,33 +289,34 @@ def is_robot_moving(img,supposed_to_move):
         return False
     return False
 
-def robot_controls(direction_response: str, heading_to_target)->list[str]:
+def robot_controls(direction_response: str, heading_to_target, ll_fsm)->list[str]:
         # choose next action based on VLM response
     all_commands = []
     robot_heading = ll_fsm.robot_state.cur_heading
+
     if direction_response == 'keep straight':
         # align heading and go forward
         all_commands.append(ll_fsm.turn_to_heading(heading_to_target))
     elif direction_response == 'go left':
         if 0 < robot_heading <= 180: # facing up
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
         else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
     elif direction_response == 'go right':
         if 0 < robot_heading <= 180: # facing up
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
         else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
     elif direction_response == 'go up':
         if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
         else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
     elif direction_response == 'go down':
         if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 30)) # CW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
         else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 30)) # CCW
+            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
     return all_commands
                
 

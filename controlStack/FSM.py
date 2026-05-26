@@ -89,7 +89,14 @@ class SpatialVLMFSM:
             'StopSignRelativeToHeading': 'Determine where a specific stop sign lies relative to the cloc\'s current heading, such as front, right, or back-left.',
             'CountPersonAtClosestBench': 'Count how many people are at the bench that is closest to the clock.',
             'ClosestBenchWithPerson': 'Identify the nearest bench to the clock that has at least one person.',
-            'AvoidObstacleToReachClosestBench': 'Determine whether the clock should go straight, turn left, or turn right to reach the nearest bench while avoiding blocking objects, with the red heading dot aligned to the closest bench.',
+            'AvoidObstacleToReachClosestBench': ( 
+                f"Answer the visual question using a short final answer only. Do not explain your reasoning."
+                f"A red circle is placed in front of the clock to indicate its current heading direction. "
+                f"The clock is currently facing the closest bench and wants to reach that bench. "
+                f"Ignore the people already at that bench. "
+                f"If no other object blocks the straight path between the clock and the closest bench, answer 'keep straight'. "
+                f"Otherwise, answer 'turn left' or 'turn right' to avoid the first blocking object along that path."
+            ),
             'AvoidObstacleToReachClosestStopSign': 'Determine whether the clock should go straight, turn left, or turn right to reach the nearest stop sign while avoiding blocking objects, with the red heading dot aligned to the closest stop sign.',
             'DirectionToClosestBench': 'Determine the compass direction of the nearest bench relative to the clock.',
             'DirectionToClosestStopSign': 'Determine the compass direction of the nearest stop sign relative to the clock.',
