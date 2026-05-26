@@ -64,42 +64,151 @@ class SpatialVLMFSM:
             
         # }
         self.question_dict = {
-            'CountPeople': 'Count the total number of people visible in the scene.',
-            'CountAnimals': 'Count the total number of animals visible in the scene.',
-            'CountPeopleAtBench': 'Count how many people are associated with a specific numbered bench.',
-            'CountAnimalsAtStopSign': 'Count how many animals are associated with a specific numbered stop sign.',
-            'ListBenchesWithAtLeastKPeople': 'List all numbered benches that have at least a given number of people.',
-            'ListStopSignsWithAtLeastKAnimals': 'List all numbered stop signs that have at least a given number of animals.',
-            'ArrivedAtBench':' Decide whether the clock is close enough to a specific bench to be considered arrived there.',
-            'ArrivedAtAnimalsAroundStopSigns': 'Decide whether the clock is close enough to at least one animal in the group around a specific stop sign.',
-            'ClosestBench': 'Identify which numbered bench is nearest to the clock.',
-            'ClosestStopSign': 'Identify which numbered stop sign is nearest to the clock.',
-            'PairwiseCloserBench': 'Compare two numbered benches and decide which one is closer to the clock.',
-            'PairwiseCloserStopSign': 'Compare two numbered stop signs and decide which one is closer to the clock.',
-            'ClosestToFurthestBenches': 'Order all numbered benches from nearest to farthest relative to the clock.',
-            'ClosestToFurthestStopSigns': 'Order all numbered stop signs from nearest to farthest relative to the clock.',
-            'GeometricDirectionToBench': 'Determine the compass direction of a specific bench relative to the clock.',
-            'GeometricDirectionToStopSign': 'Determine the compass direction of a specific stop sign relative to the clock.',
-            'AvoidObstacleToReachBench': 'Determine whether the clock should go straight, turn left, or turn right to reach a specific bench while avoiding blocking objects, with the red heading dot aligned to that bench.',
-            'AvoidObstacleToReachStopSign': 'Determine whether the clock should go straight, turn left, or turn right to reach a specific stop sign while avoiding blocking objects, with the red heading dot aligned to that stop sign.',
-            'BusHeadingDirection': 'Infer the current heading direction of the clock from the red dot placed in front of it.',
-            'TurnDirectionToBench': 'Decide how the clock should turn in order to face a specific bench.',
-            'TurnDirectionToStopSign': 'Decide how the clock should turn in order to face a specific stop sign.',
-            'BenchRelativeToHeading': 'Determine where a specific bench lies relative to the clock\'s current heading, such as front, left, or back-right.',
-            'StopSignRelativeToHeading': 'Determine where a specific stop sign lies relative to the cloc\'s current heading, such as front, right, or back-left.',
-            'CountPersonAtClosestBench': 'Count how many people are at the bench that is closest to the clock.',
-            'ClosestBenchWithPerson': 'Identify the nearest bench to the clock that has at least one person.',
-            'AvoidObstacleToReachClosestBench': ( 
-                f"Answer the visual question using a short final answer only. Do not explain your reasoning."
-                f"A red circle is placed in front of the clock to indicate its current heading direction. "
-                f"The clock is currently facing the closest bench and wants to reach that bench. "
-                f"Ignore the people already at that bench. "
-                f"If no other object blocks the straight path between the clock and the closest bench, answer 'keep straight'. "
-                f"Otherwise, answer 'turn left' or 'turn right' to avoid the first blocking object along that path."
+            'CountPeople': "How many people are currently visible in this scene? Respond with only an integer.",
+            'CountAnimals': "How many animals are currently visible in this scene? Respond with only an integer.",
+            'CountPeopleAtBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "How many people are currently at bench #{bench_number}? Respond with only an integer."
             ),
-            'AvoidObstacleToReachClosestStopSign': 'Determine whether the clock should go straight, turn left, or turn right to reach the nearest stop sign while avoiding blocking objects, with the red heading dot aligned to the closest stop sign.',
-            'DirectionToClosestBench': 'Determine the compass direction of the nearest bench relative to the clock.',
-            'DirectionToClosestStopSign': 'Determine the compass direction of the nearest stop sign relative to the clock.',
+            'CountAnimalsAtStopSign': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "How many animals are currently around stop sign #{stop_sign_number}? Respond with only an integer."
+            ),
+            'ListBenchesWithAtLeastKPeople': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "List the IDs of all benches that have at least {k} people in ascending order, separated by commas. "
+                "If none, respond with '0'."
+            ),
+            'ListStopSignsWithAtLeastKAnimals': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "List the IDs of all stop signs that have at least {k} animals around them in ascending order, separated by commas. "
+                "If none, respond with '0'."
+            ),
+            'ArrivedAtBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Is the clock close enough to be considered arrived at bench number {bench_number}? Respond with 'Yes' or 'No'."
+            ),
+            'ArrivedAtAnimalsAroundStopSigns': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "For each stop sign, consider all animals that are spatially closest to that stop sign. "
+                "Is the clock close enough to be considered arrived at at least one of the animals around stop sign number {stop_sign_number}? Respond with 'Yes' or 'No'."
+            ),
+            'ClosestBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Which bench is closest to the clock? "
+                "Answer with the bench ID."
+            ),
+            'ClosestStopSign': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "Which stop sign is closest to the clock? "
+                "Answer with its ID."
+            ),
+            'PairwiseCloserBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Which is closer to the clock, bench #{bench_i} or bench #{bench_j}? Respond with only the bench number."
+            ),
+            'PairwiseCloserStopSign': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "Which is closer to the clock, stop sign #{stop_i} or stop sign #{stop_j}? Respond with only the stop sign number."
+            ),
+            'ClosestToFurthestBenches': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "List the benches in order from closest to furthest from the clock, separated by commas. "
+                "For example, '2, 1, 4, 3'. "
+            ),
+            'ClosestToFurthestStopSigns': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "List the stop signs in order from closest to furthest from the clock, separated by commas. "
+                "For example, '2, 1, 4, 3'. "
+            ),
+            'GeometricDirectionToBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "What is the relative direction of bench #{bench_number} to the clock? "
+                "Answer with exactly one of: 'North', 'South', 'East', 'West', "
+                "'Northeast', 'Northwest', 'Southeast', or 'Southwest'. "
+            ),
+            'GeometricDirectionToStopSign': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "What is the relative direction of stop sign #{stop_sign_number} to the clock? "
+                "Answer with exactly one of: 'North', 'South', 'East', 'West', "
+                "'Northeast', 'Northwest', 'Southeast', or 'Southwest'. "
+            ),
+            'AvoidObstacleToReachBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "The clock is currently facing bench {bench_number} and wants to reach that bench. "
+                "Ignore the people already at bench {bench_number}. "
+                "If no other object blocks the straight path between the clock and bench {bench_number}, answer 'keep straight'. "
+                "Otherwise, answer 'turn left' or 'turn right' to avoid the first blocking object along that path."
+            ),
+            'AvoidObstacleToReachStopSign': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "The clock is currently facing stop sign {stop_sign_number} and wants to reach that stop sign. "
+                "Ignore the animals already grouped with stop sign {stop_sign_number}. "
+                "If no other object blocks the straight path between the clock and stop sign {stop_sign_number}, answer 'keep straight'. "
+                "Otherwise, answer 'turn left' or 'turn right' to avoid the first blocking object along that path."
+            ),
+            'BusHeadingDirection': (
+                "A red circle is placed in front of the clock in the image to indicate its current heading direction. "
+                "Based on the position of the red circle relative to the clock, in which direction is the clock currently heading? "
+                "Answer with exactly one of: 'North', 'South', 'East', 'West', "
+                "'Northeast', 'Northwest', 'Southeast', or 'Southwest'."
+            ),
+            'TurnDirectionToBench': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "To face bench #{bench_number}, should the clock turn left, turn right, or is it already facing that bench? "
+                "Answer with exactly one of: 'turn left', 'turn right', or 'already facing'."
+            ),
+            'TurnDirectionToStopSign': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "To face stop sign #{stop_sign_number}, should the clock turn left, turn right, or is it already facing that stop sign? "
+                "Answer with exactly one of: 'turn left', 'turn right', or 'already facing'."
+            ),
+            'BenchRelativeToHeading': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "Where is bench #{bench_number} relative to the clock's current heading direction? "
+                "Answer with exactly one of: 'front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', or 'front-left'."
+            ),
+            'StopSignRelativeToHeading': (
+                "Each stop sign in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the stop sign IDs. "
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "Where is stop sign #{stop_sign_number} relative to the clock's current heading direction? "
+                "Answer with exactly one of: 'front', 'front-right', 'right', 'back-right', 'back', 'back-left', 'left', or 'front-left'."
+            ),
+            'CountPersonAtClosestBench': "How many people are at the bench closest to the clock? Respond with only an integer.",
+            'ClosestBenchWithPerson': (
+                "Each bench in the image has a visible number label beside it (e.g., 1, 2, 3, ...). Use these printed numbers as the bench IDs. "
+                "Which bench is closest to the clock that has at least one person at it? Answer with the bench ID. "
+                "If no benches have people, respond with '0'. "
+            ),
+            'AvoidObstacleToReachClosestBench': (
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "The clock is currently facing the closest bench and wants to reach that bench. "
+                "Ignore the people already at that bench. "
+                "If no other object blocks the straight path between the clock and the closest bench, answer 'keep straight'. "
+                "Otherwise, answer 'turn left' or 'turn right' to avoid the first blocking object along that path."
+            ),
+            'AvoidObstacleToReachClosestStopSign': (
+                "A red circle is placed in front of the clock to indicate its current heading direction. "
+                "The clock is currently facing the closest stop sign and wants to reach that stop sign. "
+                "Ignore the animals already grouped with that stop sign. "
+                "If no other object blocks the straight path between the clock and the closest stop sign, answer 'keep straight'. "
+                "Otherwise, answer 'turn left' or 'turn right' to avoid the first blocking object along that path."
+            ),
+            'DirectionToClosestBench': (
+                "What is the relative direction of the closest bench to the clock? "
+                "Answer with exactly one of: 'North', 'South', 'East', 'West', "
+                "'Northeast', 'Northwest', 'Southeast', or 'Southwest'."
+            ),
+            'DirectionToClosestStopSign': (
+                "What is the relative direction of the closest stop sign to the clock? "
+                "Answer with exactly one of: 'North', 'South', 'East', 'West', "
+                "'Northeast', 'Northwest', 'Southeast', or 'Southwest'."
+            ),
         }
     
     def override_states(self, new_state):

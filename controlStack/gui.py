@@ -27,7 +27,7 @@ from ultralytics import YOLO
 from client_v2 import get_clock_box, getCoords, find_item_with_id, is_robot_moving, CameraStream,display,robot_controls, send_to_VLM
 fsm = FSM.SpatialVLMFSM()
 ll_fsm = LowLevelFSM(Point(0,0))
-camera = CameraStream(1).start()
+camera = CameraStream(0).start()
 robot =  BluetoothBot.BluetoothBot()
 robot.open_connection()
 # SERVER_URL = "https://ik92uwhwu2vm2v-8000.proxy.runpod.net" #FIX THIS LATER if we have a dedicated server, probably put this in an env
@@ -316,80 +316,20 @@ class UnitTest:
         
 
     def AvoidObstacleToReachClosestStopSign():
-        fsm.override_states("DRIVETONEARESTSTOP")
-        # for _ in range(100):
         camera.update()
         camera.read()
-        img = camera.read()
-        prompt = f"{fsm.question_dict['ClosestToFurthestStopSigns']}"
-        response = send_to_VLM(img,prompt)
-        fsm.update_observations({'ClosestToFurthestStopSigns': response})
-        
-        #This is our first dynamic test
-        img = camera.read()
-
-        results = yolo_model(
-            source=img, #The camera port
-            device="cpu",  #Cuda device (gpu), what is this? LOL we are definetly talking, and processing through the FSM using our cpu, we should probably offload this to the GPU
-            #This might've just been an artifact of our testing.
-            verbose=False #shuts it up
-        )
-
-        # print("YOLO LATENCY" + str(time.perf_counter()-start))
-
-        boxed_img =  results[0].plot()
-        display(boxed_img)
-
-        robot_info = get_clock_box(results)
-        if(robot_info != None):
-            robot_center = Point(float(robot_info['center'][0]), float(-1*robot_info['center'][1]))
-            ll_fsm.update_robot_state(robot_center)
-
-            # questions = fsm.get_relevant_questions()
-
-
-        print('moving forward a little to get header')
-        commands = ll_fsm.go_forward(3)
-        for c in commands:
-            print(f"Sending command: {c}")
-            try:
-                robot.send_message(c)
-            except:
-                print("comms eror")
-            time.sleep(1) # wait for robot to process command
 
         exit_answer = ""
 
         while(exit_answer != "yes"):
             img = camera.read()
-            results = yolo_model(source=img, device="cpu", verbose=False)
-
-            display(results[0].plot())
-
-            robot_info = get_clock_box(results)
-            #I do not think heading is a problem anymore(?)
-            if(robot_info == None):
-                robot_center = Point(0,0)
-                ll_fsm.update_robot_state(robot_center)
-            else:
-                temp_y = -1*float(robot_info['center'][1])
-                robot_center = Point(float(robot_info['center'][0]), temp_y)
-                ll_fsm.update_robot_state(robot_center)
-            direction_prompt = (f"{fsm.question_dict['AvoidObstacleToReachClosestStopSign']} respond with \'keep straight\', \'go left\', \'go right\'")
+            direction_prompt = (f"{fsm.question_dict['AvoidObstacleToReachClosestStopSign']}")
             direction_response = send_to_VLM(img, direction_prompt)
             print(f"VLM Direction Response: {direction_response}")
             target,id = fsm.get_target()
 
-            target_coords = find_item_with_id(results, target, id)
-            print(f'robot: {robot_center}, target: {target_coords}')
-            item_point = Point(target_coords[0], -1*target_coords[1])
-            heading_to_target = robot_center.get_heading(item_point)
+            all_commands = robot_controls(direction_response=direction_response)
 
-            all_commands = robot_controls(direction_response=direction_response, heading_to_target=heading_to_target, ll_fsm=ll_fsm)
-            
-            all_commands.append(ll_fsm.go_forward(10))
-            # print(f'robot header: {robot_heading}')
-            print(f'header to object: {heading_to_target}')
             # send commands to robot
             for commands in all_commands:
                 for command in commands:
@@ -400,9 +340,8 @@ class UnitTest:
                         print("comms error")
                     time.sleep(2) # wait for robot to process command
 
-            img = camera.read()
-            prompt = (f"{fsm.question_dict['ArrivedAtAnimalsAroundStopSigns']} respond with a \'yes\' or \'no\'") #Just end it here for the unit test
-            exit_answer = send_to_VLM(img,prompt)
+            if ("keep_straight" in direction_response):
+                exit_answer = "yes"
 
 
     def ClosestBenchWithPerson():

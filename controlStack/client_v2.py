@@ -41,26 +41,49 @@ prefixes_to_remove = [
 class CameraStream:
     def __init__(self, src=0):
         self.stream = cv2.VideoCapture(src,cv2.CAP_V4L2)
-        (self.grabbed, self.frame) = self.stream.read()
+        self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.lock = threading.Lock()
+        self.capture_lock = threading.Lock()
         self.stopped = False
+        with self.capture_lock:
+            (self.grabbed, self.frame) = self.stream.read()
 
     def start(self):
-        threading.Thread(target=self.update, args=()).start()
+        threading.Thread(target=self._update_loop, args=(), daemon=True).start()
         return self
 
-    def update(self):
+    def _update_loop(self):
         while not self.stopped:
-            if not self.grabbed:
+            with self.capture_lock:
+                grabbed, frame = self.stream.read()
+            if not grabbed:
                 self.stop()
-            else:
-                (self.grabbed, self.frame) = self.stream.read()
-            # time.sleep(0.001) 
+                break
+            with self.lock:
+                self.grabbed = grabbed
+                self.frame = frame
+            time.sleep(0.001)
+
+    def update(self):
+        with self.capture_lock:
+            grabbed, frame = self.stream.read()
+        if not grabbed:
+            self.stop()
+            return False
+        with self.lock:
+            self.grabbed = grabbed
+            self.frame = frame
+        return True
 
     def read(self):
-        return self.frame
+        with self.lock:
+            if self.frame is None:
+                return None
+            return self.frame.copy()
 
     def stop(self):
         self.stopped = True
+        self.stream.release()
 
 def send_to_VLM(img,phase) :
     # img = cv2.imread(img_path_test,cv2.IMREAD_COLOR)
@@ -80,8 +103,8 @@ def send_to_VLM(img,phase) :
                 "temperature": 0.5
             }
             # print(payload["image"])
-            payload_json = json.dump(payload)
-            print(len(payload_json.encode('utf-8')))
+            # payload_json = json.dump(payload)
+            # print(len(payload_json.encode('utf-8')))
             start = time.perf_counter()
             # response = requests.post(
             #     f"{SERVER_URL_ALT}/inference",
@@ -289,34 +312,19 @@ def is_robot_moving(img,supposed_to_move):
         return False
     return False
 
-def robot_controls(direction_response: str, heading_to_target, ll_fsm)->list[str]:
+def robot_controls(direction_response: str)->list[str]:
         # choose next action based on VLM response
     all_commands = []
     robot_heading = ll_fsm.robot_state.cur_heading
 
     if direction_response == 'keep straight':
         # align heading and go forward
-        all_commands.append(ll_fsm.turn_to_heading(heading_to_target))
-    elif direction_response == 'go left':
-        if 0 < robot_heading <= 180: # facing up
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
-        else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
-    elif direction_response == 'go right':
-        if 0 < robot_heading <= 180: # facing up
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
-        else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
-    elif direction_response == 'go up':
-        if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
-        else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
-    elif direction_response == 'go down':
-        if 0 <= robot_heading <= 90 or 270 < robot_heading <= 360: # facing right
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target - 10)) # CW
-        else:
-            all_commands.append(ll_fsm.turn_to_heading(heading_to_target + 10)) # CCW
+        all_commands.append('f,10,5') # 5cm
+    elif direction_response == 'turn left':
+        all_commands.append('l,10,15') # 15deg
+    elif direction_response == 'turn right':
+        all_commands.append('r,10,15') # 15deg
+
     return all_commands
                
 
